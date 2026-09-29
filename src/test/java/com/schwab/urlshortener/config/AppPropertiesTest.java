@@ -13,6 +13,7 @@ import org.springframework.boot.autoconfigure.validation.ValidationAutoConfigura
 import org.springframework.boot.context.properties.bind.BindException;
 import org.springframework.boot.context.properties.bind.validation.BindValidationException;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
 import org.springframework.validation.FieldError;
 
@@ -52,7 +53,7 @@ class AppPropertiesTest {
     @ValueSource(strings = {"", "   ", "localhost:8080", "ftp://short.example", "/relative", "//short.example",
             "http://", "https://user@short.example", "https://user:pw@short.example", "not a url",
             "javascript:alert(1)", "short.example",
-            // R3: the base URL may not carry a query or fragment, an empty one included
+            // The base URL may not carry a query or fragment, an empty one included (D28, D33)
             "https://short.example/?x=1", "https://short.example/#f", "https://short.example/?",
             "https://short.example/#", "https://short.example/base?x=1#f"})
     void shouldFailStartupWhenBaseUrlIsBlankOrNotAbsoluteHttpUrlWithHost(String value) {
@@ -60,25 +61,39 @@ class AppPropertiesTest {
                 .run(ctx -> assertBaseUrlViolation(ctx.getStartupFailure(), value.strip()));
     }
 
-    // withPropertyValues("APP_BASE_URL=...") would never bind: environment-style name mapping only
-    // applies to a SystemEnvironmentPropertySource, so that key is added through one here.
-    private ApplicationContextRunner withEnvironmentVariable(String name, String value) {
+    /**
+     * Adds variables the way the OS environment does. The source is named "systemEnvironment", so Spring Boot
+     * applies SystemEnvironmentPropertyMapper and both the canonical (APP_BASEURL) and the legacy (APP_BASE_URL)
+     * forms bind, as in production. addFirst replaces the real OS source of this context, so the developer's own
+     * variables cannot leak in. Pass ALL variables in one call: a second source with the same name replaces the first.
+     */
+    private ApplicationContextRunner withEnvironment(Map<String, Object> variables) {
         return runner.withInitializer(ctx -> ctx.getEnvironment().getPropertySources().addFirst(
-                new SystemEnvironmentPropertySource("env", Map.of(name, value))));
+                new SystemEnvironmentPropertySource(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME,
+                        Map.copyOf(variables))));
     }
 
-    @Test
-    void shouldFailStartupWhenBaseUrlIsSetFromEnvironmentStyleKeyWithInvalidValue() {
-        withEnvironmentVariable("APP_BASE_URL", "ftp://x.example")
+    @ParameterizedTest
+    @ValueSource(strings = {"APP_BASE_URL", "APP_BASEURL"})
+    void shouldBindBaseUrlFromBothEnvironmentForms(String variable) {
+        withEnvironment(Map.of(variable, "https://env.example")).run(ctx -> {
+            assertThat(ctx).hasNotFailed();
+            assertThat(ctx.getBean(AppProperties.class).baseUrl()).isEqualTo("https://env.example");
+        });
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"APP_BASE_URL", "APP_BASEURL"})
+    void shouldFailStartupWhenBaseUrlFromEitherEnvironmentFormIsInvalid(String variable) {
+        withEnvironment(Map.of(variable, "ftp://x.example"))
                 .run(ctx -> assertBaseUrlViolation(ctx.getStartupFailure(), "ftp://x.example"));
     }
 
     @Test
-    void shouldBindBaseUrlFromEnvironmentStyleName() {
-        withEnvironmentVariable("APP_BASE_URL", "https://env.example").run(ctx -> {
-            assertThat(ctx).hasNotFailed();
-            assertThat(ctx.getBean(AppProperties.class).baseUrl()).isEqualTo("https://env.example");
-        });
+    void shouldPreferCanonicalBaseUrlEnvironmentFormWhenBothAreSet() {
+        withEnvironment(Map.of("APP_BASEURL", "https://canonical.example", "APP_BASE_URL", "https://legacy.example"))
+                .run(ctx -> assertThat(ctx.getBean(AppProperties.class).baseUrl())
+                        .isEqualTo("https://canonical.example"));
     }
 
     // D29, D48: the built-in words are always reserved; the property only adds.
@@ -104,31 +119,36 @@ class AppPropertiesTest {
                 });
     }
 
-    @Test
-    void shouldBindAdditionalReservedWordsFromEnvironmentStyleName() {
-        // Verified: each dash of shortener.alias.additional-reserved-words becomes an underscore
-        // (SHORTENER_ALIAS_ADDITIONAL_RESERVED_WORDS); SHORTENER_ALIAS_ADDITIONALRESERVEDWORDS does not bind.
-        // A comma-separated environment value is split into a list.
-        withEnvironmentVariable("APP_BASE_URL", "http://localhost:8080")
-                .withInitializer(ctx -> ctx.getEnvironment().getPropertySources().addFirst(
-                        new SystemEnvironmentPropertySource("env2",
-                                Map.of("SHORTENER_ALIAS_ADDITIONAL_RESERVED_WORDS", "promo,Sale"))))
-                .run(ctx -> {
-                    assertThat(ctx).hasNotFailed();
-                    assertThat(ctx.getBean(AliasProperties.class).additionalReservedWords())
-                            .containsExactly("promo", "Sale");
-                    assertThat(ctx.getBean(AliasPolicy.class).isValid("sale")).isFalse();
-                    assertThat(ctx.getBean(AliasPolicy.class).isValid("api")).isFalse();
-                });
+    @ParameterizedTest
+    @ValueSource(strings = {"SHORTENER_ALIAS_ADDITIONAL_RESERVED_WORDS", "SHORTENER_ALIAS_ADDITIONALRESERVEDWORDS"})
+    void shouldBindAdditionalReservedWordsFromBothEnvironmentForms(String variable) {
+        // Both the dash-to-underscore and the dash-removed form bind in production. A comma-separated
+        // environment value is split into a list.
+        withEnvironment(Map.of("APP_BASE_URL", "http://localhost:8080", variable, "promo,Sale")).run(ctx -> {
+            assertThat(ctx).hasNotFailed();
+            assertThat(ctx.getBean(AliasProperties.class).additionalReservedWords()).containsExactly("promo", "Sale");
+            assertThat(ctx.getBean(AliasPolicy.class).isValid("sale")).isFalse();
+            assertThat(ctx.getBean(AliasPolicy.class).isValid("api")).isFalse();
+        });
+    }
+
+    // D48: the property binds but can never remove a built-in word.
+    @ParameterizedTest
+    @ValueSource(strings = {"SHORTENER_ALIAS_ADDITIONAL_RESERVED_WORDS", "SHORTENER_ALIAS_ADDITIONALRESERVEDWORDS"})
+    void shouldBindButNotRemoveBuiltInWordWhenEnvironmentValueNamesOne(String variable) {
+        withEnvironment(Map.of("APP_BASE_URL", "http://localhost:8080", variable, "api,promo")).run(ctx -> {
+            assertThat(ctx).hasNotFailed();
+            assertThat(ctx.getBean(AliasProperties.class).additionalReservedWords()).containsExactly("api", "promo");
+            assertThat(ctx.getBean(AliasPolicy.class).isValid("api")).isFalse();
+            assertThat(ctx.getBean(AliasPolicy.class).isValid("promo")).isFalse();
+            assertThat(ctx.getBean(AliasPolicy.class).isValid("other")).isTrue();
+        });
     }
 
     @Test
     void shouldNotBindAdditionalReservedWordsFromWrongEnvironmentStyleName() {
         // Negative counterpart: a key that maps to no property (here the removed name) binds nothing.
-        withEnvironmentVariable("APP_BASE_URL", "http://localhost:8080")
-                .withInitializer(ctx -> ctx.getEnvironment().getPropertySources().addFirst(
-                        new SystemEnvironmentPropertySource("env2",
-                                Map.of("SHORTENER_ALIAS_RESERVEDWORDS", "promo"))))
+        withEnvironment(Map.of("APP_BASE_URL", "http://localhost:8080", "SHORTENER_ALIAS_RESERVEDWORDS", "promo"))
                 .run(ctx -> {
                     assertThat(ctx).hasNotFailed();
                     assertThat(ctx.getBean(AliasProperties.class).additionalReservedWords()).isEmpty();

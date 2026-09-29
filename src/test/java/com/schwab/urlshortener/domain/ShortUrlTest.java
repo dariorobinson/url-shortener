@@ -8,6 +8,8 @@ import com.schwab.urlshortener.domain.exception.ShortUrlAlreadyDeactivatedExcept
 import com.schwab.urlshortener.domain.exception.ShortUrlDeletedException;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /** Plain unit test, no Spring: proves {@link ShortUrl}'s state-transition invariants. */
 class ShortUrlTest {
@@ -212,5 +214,91 @@ class ShortUrlTest {
         assertThat(toString).doesNotContain("shh");
         assertThat(toString).doesNotContain("alice");
         assertThat(toString).doesNotContain("bob");
+    }
+
+    // D51: the actor guard, shared bound ShortUrl.MAX_ACTOR_LENGTH.
+
+    @Test
+    void shouldAcceptActorAtExactlyMaxLengthOnCreateAndSoftDelete() {
+        String actor = "a".repeat(ShortUrl.MAX_ACTOR_LENGTH);
+
+        ShortUrl url = ShortUrl.create("abc1234", "https://example.com/", false, actor, CREATED_AT);
+        url.softDelete(actor, T1);
+
+        assertThat(ShortUrl.MAX_ACTOR_LENGTH).isEqualTo(100);
+        assertThat(url.getCreatedBy()).isEqualTo(actor);
+        assertThat(url.getDeletedBy()).isEqualTo(actor);
+    }
+
+    @Test
+    void shouldCountCodePointsSoHundredMultibyteActorIsAcceptedAndHundredAndOneRejected() {
+        String hundred = "\u00e9".repeat(ShortUrl.MAX_ACTOR_LENGTH);
+        String tooLong = hundred + "\u00e9";
+
+        ShortUrl url = ShortUrl.create("abc1234", "https://example.com/", false, hundred, CREATED_AT);
+        url.softDelete(hundred, T1);
+
+        assertThat(url.getCreatedBy()).isEqualTo(hundred);
+        assertThat(url.getDeletedBy()).isEqualTo(hundred);
+        assertThatThrownBy(() -> ShortUrl.create("abc1234", "https://example.com/", false, tooLong, CREATED_AT))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> newActive().softDelete(tooLong, T1))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void shouldCountSupplementaryCharactersAsOneCodePoint() {
+        String hundred = "\uD83D\uDE00".repeat(ShortUrl.MAX_ACTOR_LENGTH);
+
+        ShortUrl url = ShortUrl.create("abc1234", "https://example.com/", false, hundred, CREATED_AT);
+
+        assertThat(url.getCreatedBy()).isEqualTo(hundred);
+    }
+
+    @Test
+    void shouldRejectHundredAndOneSupplementaryCharacterActor() {
+        String tooLong = "\uD83D\uDE00".repeat(ShortUrl.MAX_ACTOR_LENGTH + 1);
+
+        assertThatThrownBy(() -> ShortUrl.create("abc1234", "https://example.com/", false, tooLong, CREATED_AT))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> newActive().softDelete(tooLong, T1)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", " ", "   ", "\t", " alice", "alice ", "alice\n"})
+    void shouldRejectBlankOrPaddedActorOnCreateAndSoftDelete(String actor) {
+        assertThatThrownBy(() -> ShortUrl.create("abc1234", "https://example.com/", false, actor, CREATED_AT))
+                .isInstanceOf(IllegalArgumentException.class);
+        ShortUrl url = newActive();
+        assertThatThrownBy(() -> url.softDelete(actor, T1)).isInstanceOf(IllegalArgumentException.class);
+        assertThat(url.getStatus()).isEqualTo(ShortUrlStatus.ACTIVE);
+        assertThat(url.getDeletedBy()).isNull();
+        assertThat(url.getDeletedAt()).isNull();
+    }
+
+    @Test
+    void shouldRejectActorOfMaxLengthPlusOneAndMaxLengthPlusTrailingSpace() {
+        String plusOne = "a".repeat(ShortUrl.MAX_ACTOR_LENGTH + 1);
+        String plusSpace = "a".repeat(ShortUrl.MAX_ACTOR_LENGTH) + " ";
+        ShortUrl url = newActive();
+
+        for (String actor : new String[] {plusOne, plusSpace}) {
+            assertThatThrownBy(() -> ShortUrl.create("abc1234", "https://example.com/", false, actor, CREATED_AT))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> url.softDelete(actor, T1)).isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThat(url.getStatus()).isEqualTo(ShortUrlStatus.ACTIVE);
+        assertThat(url.getDeletedBy()).isNull();
+    }
+
+    @Test
+    void shouldValidateActorBeforeDeletedCheckButAfterNullChecks() {
+        ShortUrl deleted = newActive();
+        deleted.softDelete("admin", T1);
+
+        assertThatThrownBy(() -> deleted.softDelete(" ", T2)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> deleted.softDelete("bob", T2)).isInstanceOf(ShortUrlDeletedException.class);
+        assertThatThrownBy(() -> deleted.softDelete(" ", null)).isInstanceOf(NullPointerException.class);
+        assertThat(deleted.getDeletedBy()).isEqualTo("admin");
     }
 }

@@ -44,6 +44,13 @@ As an engineer, I want request tracing, security headers, a hardened container i
 ## Open questions
 - None. D37 fixes HSTS's exact directives and scope (HTTPS-only, trusted-proxy forwarded headers).
 
+## Carry-over from US-005 (engineer-approved at US-005 G3)
+- **Actuator:** exposing any actuator endpoint beyond `health` requires `hasRole(ADMIN)` for it. Today `/actuator/**` is only `authenticated()`.
+- **HSTS behind the load balancer (D37):** configure `server.forward-headers-strategy` with a trusted proxy, so that `request.isSecure()` reflects HTTPS at the load balancer. Test that HSTS is sent when the trusted proxy reports HTTPS, and is not sent for an untrusted source.
+- **Health probes:** `HEAD /actuator/health` returns 401 anonymously, because only `GET` is public there. Health checks (Compose, load balancer) must use `GET`.
+- **CORS (if ever added):** configure it through `http.cors(...)` so preflight is handled before authorization, or preflight requests will get 401.
+- **Env-var names in deployment docs:** document the canonical forms. Both forms bind; see the correction in the US-004 story.
+
 ## Design note
 *(architect)*
 

@@ -11,8 +11,9 @@ import java.util.stream.Stream;
 
 /**
  * Enforces D6 (Base62 alias, {@code MIN_LENGTH} to {@code MAX_LENGTH} characters) and D29
- * (reserved words, case-insensitive; built-in set plus configured additions, D48). Pure: the alias is checked as submitted and is
- * never trimmed. The length bounds are the generator's constants, so they are written once.
+ * (reserved words, case-insensitive; built-in set plus configured additions, D48). Pure: the
+ * alias is checked as submitted and is never trimmed. The length bounds are the generator's
+ * constants, so they are written once.
  */
 public class AliasPolicy {
 

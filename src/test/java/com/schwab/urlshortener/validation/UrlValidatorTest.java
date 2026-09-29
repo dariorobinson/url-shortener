@@ -205,7 +205,7 @@ class UrlValidatorTest {
         assertThat(validator.isValid("https://xn--mnchen-3ya.example/x")).isTrue();
     }
 
-    // R8: java.net.URI accepts unpaired surrogates, but they cannot be encoded as UTF-8
+    // java.net.URI accepts lone surrogates, but they are rejected because they cannot be encoded as UTF-8
     @ParameterizedTest
     @ValueSource(strings = {
         "https://other.example/x\uD800",

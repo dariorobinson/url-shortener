@@ -39,6 +39,12 @@ import lombok.ToString;
 @ToString(onlyExplicitlyIncluded = true)
 public class ShortUrl {
 
+    /**
+     * Maximum length, in code points, of the actor stored in {@code created_by}/{@code deleted_by}
+     * (D51). Shared by the column definition, the actor guard and the configured-username bound.
+     */
+    public static final int MAX_ACTOR_LENGTH = 100;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @ToString.Include
@@ -67,7 +73,7 @@ public class ShortUrl {
     @Column(name = "last_accessed_at", insertable = false, updatable = false)
     private Instant lastAccessedAt;
 
-    @Column(name = "created_by", nullable = false, updatable = false, length = 100)
+    @Column(name = "created_by", nullable = false, updatable = false, length = MAX_ACTOR_LENGTH)
     private String createdBy;
 
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -79,7 +85,7 @@ public class ShortUrl {
     @Column(name = "deleted_at")
     private Instant deletedAt;
 
-    @Column(name = "deleted_by", length = 100)
+    @Column(name = "deleted_by", length = MAX_ACTOR_LENGTH)
     private String deletedBy;
 
     @Version
@@ -87,14 +93,22 @@ public class ShortUrl {
     @ToString.Include
     private Long version;
 
+    /**
+     * @throws NullPointerException if any argument is null
+     * @throws IllegalArgumentException if {@code createdBy} is blank, has leading or trailing
+     *         whitespace, or exceeds {@link #MAX_ACTOR_LENGTH} code points (D51)
+     */
     public static ShortUrl create(String shortCode, String originalUrl, boolean customAlias,
                                    String createdBy, Instant createdAt) {
         ShortUrl url = new ShortUrl();
         url.shortCode = Objects.requireNonNull(shortCode, "shortCode");
         url.originalUrl = Objects.requireNonNull(originalUrl, "originalUrl");
         url.customAlias = customAlias;
-        url.createdBy = Objects.requireNonNull(createdBy, "createdBy");
-        url.createdAt = toDbPrecision(Objects.requireNonNull(createdAt, "createdAt"));
+        Objects.requireNonNull(createdBy, "createdBy");
+        // Computed before the actor guard so that a null createdAt is reported as NPE, not masked by the guard.
+        Instant created = toDbPrecision(Objects.requireNonNull(createdAt, "createdAt"));
+        url.createdBy = requireValidActor(createdBy, "createdBy");
+        url.createdAt = created;
         url.updatedAt = url.createdAt;
         url.status = ShortUrlStatus.ACTIVE;
         url.clickCount = 0L;        // mirrors DEFAULT 0 (column not inserted)
@@ -122,14 +136,35 @@ public class ShortUrl {
         updatedAt = now;
     }
 
+    /**
+     * @throws NullPointerException if any argument is null
+     * @throws IllegalArgumentException if {@code deletedBy} is blank, has leading or trailing
+     *         whitespace, or exceeds {@link #MAX_ACTOR_LENGTH} code points (D51)
+     * @throws ShortUrlDeletedException if this short URL is already deleted
+     */
     public void softDelete(String deletedBy, Instant deletedAt) {
         Objects.requireNonNull(deletedBy, "deletedBy");
         Instant now = toDbPrecision(Objects.requireNonNull(deletedAt, "deletedAt"));
+        requireValidActor(deletedBy, "deletedBy");
         requireNotDeleted();
         status = ShortUrlStatus.DELETED;   // allowed from ACTIVE and DEACTIVATED (D36)
         this.deletedBy = deletedBy;
         this.deletedAt = now;
         updatedAt = now;
+    }
+
+    /**
+     * PostgreSQL silently truncates trailing spaces that overflow a VARCHAR(n), so the bound is
+     * enforced here before insert (D47, D51). Length is in code points, matching {@code char_length}.
+     */
+    private static String requireValidActor(String actor, String name) {
+        if (actor.isBlank() || !actor.equals(actor.strip())
+                || actor.codePointCount(0, actor.length()) > MAX_ACTOR_LENGTH) {
+            throw new IllegalArgumentException(
+                    name + " must be non-blank, without surrounding whitespace, and at most "
+                            + MAX_ACTOR_LENGTH + " characters");
+        }
+        return actor;
     }
 
     private void requireNotDeleted() {

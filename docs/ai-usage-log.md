@@ -420,5 +420,125 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
 
 - **Date:** 2026-09-29
 - **Task:** Commit C2b: US-003, US-004, and the engineer-approved `CLAUDE.md` review rules.
+- **Engineer decision:** "approve all" (relayed; it means the orchestrator's recommendations, not the main session's comments-only alternative). **Accepted:**
+  - Commit C2b exactly as staged. **Committed as `7d441b7`** (parent `34489d5`, 28 files). Not pushed; the main session verifies and pushes.
+  - R11, R12, R14 and R15 carry into US-005. Its design note must make both env-var forms the tested contract, and correct the false comment in `AppPropertiesTest`.
+  - US-004 round-3 review rules 1 and 3 are **Accepted**; rule 2 is **Rejected**. The main session added the two rules to `CLAUDE.md` after C2b was staged. At the engineer's direction they were left out of C2b, which committed the index only, and they go into C3.
+- **Validation:** the staging checks passed. After the commit, `git status --short` showed only ` M CLAUDE.md`.
+- **Rationale:** *(engineer to add)*
+
+## Entry 19 — US-005 security foundation (design)
+
+- **Date:** 2026-09-29
+- **Task:** Architect design note for US-005. The story's frontmatter has `requires_design_approval: true`, so it stops at G2.
+- **Inputs:** D3, D4, D30, D31 and D32. Carry-over from US-004: R11, R12, R14 and R15, plus the env-var forms as the tested contract. The `created_by`/`deleted_by` `VARCHAR(100)` truncation question from US-002. The CLAUDE.md rule on security-sensitive beans, which applies to the password encoder.
+- **AI recommendation (architect):**
+  - **Dependencies:** `spring-boot-starter-security` and `spring-security-test`.
+  - **Filter chain:** HTTP Basic, stateless, CSRF off, with ordered rules:
+    1. Error dispatch permitted.
+    2. `GET /actuator/health` public.
+    3. springdoc paths public.
+    4. `/actuator/**` authenticated.
+    5. `DELETE /api/v1/urls/*` ADMIN only, declared now so US-009 gets "403 before lookup".
+    6. `/api/**` requires USER.
+    7. `GET`/`HEAD` on any single segment public. It is deliberately not restricted to the code format, so US-008 AC6 can return 404 for malformed codes.
+    8. Everything else authenticated.
+  - **Method security:** none.
+  - **Users:** a list at `app.security.users[n]`. The only published security bean is a concrete `DaoAuthenticationProvider`; the BCrypt encoder (cost 10) and the user store are built inside it, per the security-sensitive-bean rule.
+  - **Errors:** `api/error/ErrorCode` (the D31 list) and a single `ProblemDetails.of` factory, shared with US-006. 401 carries `realm="url-shortener"` and the same body for missing, wrong or unknown credentials. 403 is `ACCESS_DENIED`.
+  - **Hash validation:** done after binding and never logs the value. A plaintext password would otherwise leak through Boot's failure report.
+  - **Carry-over:** R11, R12, R14 and R15 are specified. Env-binding tests use a source named `systemEnvironment` and cover both env-var forms.
+- **Engineer decisions requested:**
+  - **S1:** user configuration shape (list recommended).
+  - **S2:** `created_by`/`deleted_by` length. Option A (recommended) bounds usernames at startup plus an entity guard, with no migration.
+  - **S3:** no usernames or IPs in authentication-failure logs.
+  - **S4:** BCrypt cost fixed at 10.
+  - **S5:** redefine the reserved-words "invalid-value" test.
+  - **S6:** strip the `.env` variables from the test JVMs.
+  - **Q2–Q5:** open questions, each with a recommendation.
+- **Engineer decision:** "approve all" (relayed). The main session offered "approve all" (the orchestrator's recommendations) or "approve all, with Option B and placeholder hashes" (the main session's alternatives), and the engineer chose "approve all". **Accepted:**
+  - **S1 → D50:** list-shaped users.
+  - **S2 → D51:** Option A, username bounds plus an entity guard, no migration.
+  - **S3 → D52:** no usernames or IPs logged on 401/403.
+  - **S4 → D53:** BCrypt cost 10.
+  - **S5:** the reserved-words binding test becomes "binds but cannot remove a built-in word".
+  - **S6:** strip the `.env` variables from the test JVMs.
+  - **Q2 → D54:** case-insensitive username matching at login.
+  - **Q3 → D55:** invalid credentials get 401 on public paths.
+  - **Q4 → D56:** AC8's "sole extension" applies to security errors only. The planner adjusted AC8 and its test row. The planner also found that design note §7.2 ("same key set") conflicted with Q4; the orchestrator added an alignment note to the design note header rather than rewrite the architect's text.
+  - **Q5:** the OpenAPI Basic scheme goes in US-006.
+  - **The rest of the design as written**, including the matcher order and working local BCrypt hashes in `.env.example` (K10 accepted as designed).
+- **Main-session suggestions not adopted:**
+  - **S2:** the main session recommended Option B (migrate `created_by`/`deleted_by` to `TEXT` plus a CHECK, for consistency with D47). The engineer chose Option A. Rationale: *(engineer to add)*.
+  - **K10:** the main session recommended placeholder hashes in `.env.example`, because the repository is public. The engineer chose working local hashes. Rationale: *(engineer to add)*.
+- **Additional engineer instruction:** because the repository is public, `.env.example` comments must state plainly that its credentials are for local development only and must never be used in any shared or deployed environment.
+- **Rationale:** *(engineer to add)*
+- **Validation:** the architect cited the Spring Security 6.5.11, Boot 3.5.16, Spring Framework 6.2.19 and springdoc 2.8.17 source and docs, and OWASP. The orchestrator confirmed that only the US-005 Design note and `architecture.md` were changed.
+- **Mid-engineer:**
+  - Built `security/` (`SecurityConfig`, `UserAccountsConfig`, `UserAccountsProperties`, `UserAccounts`, `Role`, the two ProblemDetail handlers and a response writer), plus `api/error/ErrorCode` and `ProblemDetails`.
+  - Also delivered: the `ShortUrl` actor guard, the pom and yml changes, the `.env.example` public-credential warning, the S6 env excludes, and the full US-004 carry-over. That carry-over includes both env-var forms tested through a source named `systemEnvironment`, and the false comment corrected.
+  - Reported no deviations. The orchestrator confirmed on disk that the only security beans are `DaoAuthenticationProvider`, `RoleHierarchy` and `SecurityFilterChain`, with no `PasswordEncoder` or `UserDetailsService` bean.
+- **QA-tester:**
+  - Added `SecurityIT` (real Tomcat, JDK `HttpClient`), `security.feature` and `SecuritySteps`. No defects.
+  - Observation: as USER, `DELETE /api/v1/urls/abc/` (trailing slash) is not caught by the ADMIN rule.
+- **Senior review, round 1: APPROVE.**
+
+  | ID | Severity | Finding |
+  |---|---|---|
+  | R1 | SHOULD | Bad-hash tests rejected for length, not for the reason they name |
+  | R2 | SHOULD | Hash-erasure test bypassed `ProviderManager` |
+  | R3 | SHOULD | "Not logged" test could pass vacuously |
+  | R4 | SHOULD | Error-dispatch claim was untrue |
+  | R5–R14 | NIT | Various |
+
+  The mid-engineer fixed R1–R3, R5, R7, R9, R10 and R12–R14. The qa-tester fixed R4, R6 and R8, recording the error-dispatch rule as defence-in-depth. The orchestrator fixed R11.
+- **Senior review, round 2: APPROVE.**
+  - **R15 (SHOULD, security hardening):** the trailing-slash or nested DELETE variants fall through to the USER rule. Not exploitable today, but a latent privilege escalation. The reviewer recommends `DELETE /api/v1/urls/**` ADMIN plus a probe-route test, and the change goes to the engineer because it alters the approved matcher.
+  - **R16, R17:** QA comment NITs.
+  - **R18, R19:** doc NITs, fixed or superseded by the orchestrator.
+- **Proposed review rules:** six, recorded verbatim in the story.
+- **Engineer decision:** "approve all" (relayed). **Accepted:**
+  - **R15, option 1:** `DELETE /api/v1/urls/**` requires ADMIN, the pinned trailing-slash row flips to 403, and a web-slice probe route is added at `/api/v1/urls/{code}/`.
+  - **Final fix round:** R15 plus R16 and R17.
+  - **Actuator:** ADMIN-only exposure of anything beyond health goes to US-014's carry-over.
+  - **HSTS behind the load balancer:** `forward-headers-strategy` with a trusted proxy and a test also go to US-014's carry-over.
+  - **`architecture.md` notes:** the `/error` exception and never using security DEBUG/TRACE in shared environments.
+  - **Review rules:** 1–5 go into `CLAUDE.md` (the main session added them, uncommitted, for C3). Rule 6 is **Rejected**. The new rule 5 applies to R15's tests, including a case-variant test that names the story that must revisit it.
+  - **C3:** not pre-approved.
+  - **K10:** the engineer **confirmed** publishing the known local passwords (`local-admin-password`, `local-user-password`) in `.env.example`, for local development only.
+- **Rationale:** *(engineer to add)*
+- **Validation:** the orchestrator ran `./mvnw -q clean verify`: exit 0, Surefire 395/0, Failsafe 78/0 (run/failed), including 15 Cucumber scenarios, merged LINE coverage 231/232. The build log contains no generated security password.
+- **Final fix round (in progress):**
+  - The mid-engineer changed the ADMIN rule to `DELETE /api/v1/urls/**` and added web-slice probe routes at `/{code}/` and `/{code}/x`. A USER gets 403 with the probe counter unchanged, and an ADMIN reaches the probe.
+  - The qa-tester flipped the `SecurityIT` trailing-slash row to 403, re-verified the other rows, fixed R16 and R17, and commented the `/API/` row as pending.
+  - **ESCALATION:** following the new CLAUDE.md case-variant rule, the mid-engineer mapped a temporary probe at `DELETE /API/v1/urls/{code}`. A **USER got 204 and reached the handler**, because the case-sensitive matchers miss both `/api` rules and `anyRequest().authenticated()` admits any USER. It is not exploitable today (there is no upper-case route, and MVC mapping is case-sensitive). As instructed, the mid-engineer stopped, removed the temporary probe, and pinned nothing that shows the escalation passing. The orchestrator ran `./mvnw -q clean verify`: exit 0, Surefire 400/0, Failsafe 78/0 (run/failed). The senior re-review is held until the engineer decides.
+- **Engineer decision on the escalation:** "option a, approve third round" (relayed). **Accepted:** option A.
+  - The final rule becomes `anyRequest().denyAll()`, recorded as **D57**.
+  - A probe test: `DELETE /API/v1/urls/{code}` as USER gets 403, with the counter unchanged.
+  - Affected rows re-pinned: anonymous gets 401, authenticated gets 403 on unmatched paths.
+  - The comment, the design note (amendment line) and `architecture.md` (rules 5 and 8) are updated, and the `/API/` row's pending comment is removed.
+  - A **third fix round is explicitly authorised**, beyond the two-round limit, and limited to option A and its re-pins.
+  - Options B (DELETE-only `denyAll`), C (case-insensitive matchers) and D (accept and pin) were **not adopted**.
+- **Main-session observation:** before the fix, the comment said "Deny by default" while the code was `anyRequest().authenticated()`, so the comment misdescribed the rule.
+- **Process-validation finding:**
+  - The engineer approved the review rule requiring role-rule variant tests (trailing slash, nested, case) one round earlier.
+  - Applying it found a latent privilege-escalation gap before any route existed to exploit it.
+  - The two-round limit forced the fix up to the engineer, rather than letting agents change an approved security rule themselves.
+- **Fix round 3 results:**
+  - The mid-engineer changed the rule to `anyRequest().denyAll()`, citing D57 in the comment. It added web-slice probes at `DELETE /API/v1/urls/{code}`, `POST /{code}` and `GET /{a}/{b}`: USER and ADMIN get 403, anonymous gets 401 with the challenge, and the counter stays 0.
+  - The mid-engineer confirmed that `ExceptionTranslationFilter` sends anonymous callers to the entry point.
+  - The qa-tester flipped the `SecurityIT` `/API/` row to 403. No other expectation changed.
+  - QA reported "Surefire 400" against the mid-engineer's 404. The reviewer's and the orchestrator's clean builds both show **404**, so QA's figure was out of date.
+- **Senior review, final: APPROVE.** R15, R16 and R17 are resolved, and D57 blocks nothing a planned story needs.
+  - R21 (fixed by the orchestrator) and R25 (superseded by the orchestrator's verification) are closed.
+  - R20, R22, R23 and R24 are NITs left open, because no fix rounds remain.
+  - Engineer attention: anonymous `HEAD /actuator/health` returns 401, and CORS preflight would need handling. Both were added to the US-014 carry-over.
+  - Two more proposed review rules.
+- **Validation:** the orchestrator ran `./mvnw -q clean verify`: exit 0, Surefire 404/0, Failsafe 78/0 (run/failed), merged LINE coverage 231/232, and no generated password. **US-005 set to Done.**
+
+## Entry 20 — Commit C3 (G4)
+
+- **Date:** 2026-09-29
+- **Task:** Commit C3: US-005 plus the engineer-approved `CLAUDE.md` review rules and the related doc updates.
 - **Engineer decision:** *(pending G4; not pre-approved)*
 - **Rationale:** *(engineer to add)*

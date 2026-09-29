@@ -82,6 +82,13 @@ Base package: `com.schwab.urlshortener`. `JAVA_HOME` must point to JDK 25.
 - Tests that bind a property from an environment-style key add it through a `SystemEnvironmentPropertySource` and assert the bound (or rejected) value; `withPropertyValues("UPPER_SNAKE=...")` never maps to the dotted property.
 - When security depends on a library's strictness (e.g. URL parsing), known bypass inputs are pinned as explicit regression tests.
 - Every case conversion, in production code and tests, uses `Locale.ROOT`.
+- A `SystemEnvironmentPropertySource` used in a test must be named `systemEnvironment` (or end with `-systemEnvironment`); any other name bypasses Spring Boot's `SystemEnvironmentPropertyMapper`, so the test does not reflect production binding.
+- Code and test comments don't cite review finding IDs (`Rn`, `Nn`); describe the behaviour or cite a `Dnn`.
+- A negative validation test's input differs from a known-valid value in exactly the property under test (derive it from a real valid value), so it cannot be rejected for an unrelated reason.
+- Every "X is not logged" test also asserts that the expected log line was captured, so it cannot pass vacuously.
+- Behaviour implemented by a wrapper (e.g. credential erasure in `ProviderManager`) is tested through that wrapper, not the inner component.
+- Security tests never catch a broad `Exception`; they catch the specific expected type or none.
+- Every role-restricting URL rule has tests for its trailing-slash, nested-path, and case variants against a probe route mapped at that variant; the rule's pattern covers the variants (`/**`) or a method-wide deny rule follows it.
 
 ## Post-task report (required at every story completion)
 

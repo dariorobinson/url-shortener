@@ -14,6 +14,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -201,5 +202,24 @@ class ShortUrlRepositoryTest {
                     assertThat(PostgresErrors.sqlState(thrown)).isEqualTo("23505");
                     assertThat(PostgresErrors.constraintName(thrown)).isEqualTo("uk_short_url_short_code");
                 });
+    }
+
+    // D51: actor columns round-trip at exactly the shared limit, ASCII and multibyte.
+    @ParameterizedTest
+    @ValueSource(strings = {"a", "\u00e9"})
+    void shouldPersistCreatedByAndDeletedByAtExactlyMaxLengthAndReadThemBackUnchanged(String unit) {
+        String actor = unit.repeat(ShortUrl.MAX_ACTOR_LENGTH);
+        ShortUrl entity = ShortUrl.create("abc1234", "https://example.com/", false, actor, T0);
+        entity.softDelete(actor, T1);
+
+        ShortUrl saved = repository.saveAndFlush(entity);
+        testEntityManager.clear();
+
+        assertThat(queryColumn("created_by", String.class, saved.getId())).isEqualTo(actor);
+        assertThat(queryColumn("deleted_by", String.class, saved.getId())).isEqualTo(actor);
+        assertThat(queryColumn("char_length(created_by)", Integer.class, saved.getId()))
+                .isEqualTo(ShortUrl.MAX_ACTOR_LENGTH);
+        assertThat(queryColumn("char_length(deleted_by)", Integer.class, saved.getId()))
+                .isEqualTo(ShortUrl.MAX_ACTOR_LENGTH);
     }
 }

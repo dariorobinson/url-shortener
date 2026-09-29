@@ -79,6 +79,10 @@
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
     <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
+    <dependency>
       <groupId>org.flywaydb</groupId>
       <artifactId>flyway-core</artifactId>
     </dependency>
@@ -105,6 +109,11 @@
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-test</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -282,6 +291,16 @@
             <excludedEnvironmentVariable>SPRING_APPLICATION_JSON</excludedEnvironmentVariable>
             <excludedEnvironmentVariable>SPRING_CONFIG_LOCATION</excludedEnvironmentVariable>
             <excludedEnvironmentVariable>SPRING_CONFIG_ADDITIONAL_LOCATION</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_BASE_URL</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_BASEURL</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_SECURITY_USERS_0_USERNAME</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_SECURITY_USERS_0_PASSWORD_HASH</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_SECURITY_USERS_0_PASSWORDHASH</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_SECURITY_USERS_0_ROLE</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_SECURITY_USERS_1_USERNAME</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_SECURITY_USERS_1_PASSWORD_HASH</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_SECURITY_USERS_1_PASSWORDHASH</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_SECURITY_USERS_1_ROLE</excludedEnvironmentVariable>
           </excludedEnvironmentVariables>
         </configuration>
       </plugin>
@@ -305,6 +324,16 @@
             <excludedEnvironmentVariable>SPRING_APPLICATION_JSON</excludedEnvironmentVariable>
             <excludedEnvironmentVariable>SPRING_CONFIG_LOCATION</excludedEnvironmentVariable>
             <excludedEnvironmentVariable>SPRING_CONFIG_ADDITIONAL_LOCATION</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_BASE_URL</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_BASEURL</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_SECURITY_USERS_0_USERNAME</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_SECURITY_USERS_0_PASSWORD_HASH</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_SECURITY_USERS_0_PASSWORDHASH</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_SECURITY_USERS_0_ROLE</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_SECURITY_USERS_1_USERNAME</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_SECURITY_USERS_1_PASSWORD_HASH</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_SECURITY_USERS_1_PASSWORDHASH</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>APP_SECURITY_USERS_1_ROLE</excludedEnvironmentVariable>
           </excludedEnvironmentVariables>
         </configuration>
       </plugin>

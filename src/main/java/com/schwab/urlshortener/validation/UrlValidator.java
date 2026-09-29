@@ -19,7 +19,11 @@ public class UrlValidator {
 
     private final String ownHost;
 
-    /** @param appBaseUrl the configured APP_BASE_URL, whose host is "own host" (D28) */
+    /**
+     * @param appBaseUrl the configured APP_BASE_URL, whose host is "own host" (D28)
+     * @throws NullPointerException if appBaseUrl is null
+     * @throws IllegalArgumentException if appBaseUrl is not an absolute http or https URL with a host
+     */
     public UrlValidator(String appBaseUrl) {
         URI base = HttpUris.parseHttpUri(Objects.requireNonNull(appBaseUrl, "appBaseUrl"));
         if (base == null) {

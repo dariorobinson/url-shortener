@@ -20,7 +20,7 @@ See [requirements.md](requirements.md). The ambiguous requirements were resolved
 | 2 | Domain model, V1 schema, repository | Done (US-002) |
 | 3 | Short-code generator | Done (US-003) |
 | 4 | URL and alias validation | Done (US-004) |
-| 5 | Security foundation (`USER` / `ADMIN`, 401/403) | Planned |
+| 5 | Security foundation (`USER` / `ADMIN`, 401/403) | Done (US-005) |
 | 6 | Create/read API and error handling | Planned |
 | 7 | Redirect | Planned |
 | 8 | Deactivate/reactivate and soft delete | Planned |
@@ -72,6 +72,22 @@ See [architecture.md](architecture.md).
     - URLs that can't be encoded as UTF-8 are rejected.
     - The D49 host-scope behaviour is pinned by regression tests.
   - **Final build:** 281 tests, 0 failures.
+- **US-005 (Task 5):**
+  - **Design:** architect design note, approved at G2 (D50–D56).
+  - **Implementation:** the mid-engineer delivered:
+    - an HTTP Basic, stateless filter chain with ordered, deny-by-default rules;
+    - a concrete `DaoAuthenticationProvider` as the only security bean, with the encoder and user store built inside it;
+    - list-shaped users validated at startup (BCrypt cost 10, bounded lowercase usernames);
+    - `ErrorCode` and `ProblemDetails`, plus 401/403 handlers;
+    - the `ShortUrl` actor guard;
+    - the US-004 carry-over (both env-var forms tested).
+  - **QA:** the qa-tester added `SecurityIT` on real Tomcat (48 tests: encoded-path bypass pins, identical 401 bodies, 403 before handler) and a `security.feature` with 12 scenarios.
+  - **Review:** APPROVE in both rounds. Four SHOULD test-strength findings were fixed. The reviewer and QA found a latent trailing-slash gap in the ADMIN DELETE matcher (R15), which went to the engineer.
+  - **Validation:** the orchestrator ran `./mvnw -q clean verify` (473 tests, 0 failures, LINE coverage 99.6%).
+  - **Final rounds (engineer-approved):**
+    - R15: `DELETE /api/v1/urls/**` requires ADMIN.
+    - Escalation: a case-variant probe (`DELETE /API/...`) showed a USER could reach a handler. The engineer chose `anyRequest().denyAll()` (D57) and authorised a third round.
+  - **Final build:** 482 tests, 0 failures.
 
 ---
 

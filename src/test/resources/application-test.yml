@@ -4,3 +4,15 @@ spring:
     banner-mode: off
 app:
   base-url: http://localhost:8080
+  security:
+    # Test-only users (D50). Plaintext passwords live in support/TestUsers. Hashes are BCrypt cost 10 (D53).
+    users:
+      - username: admin
+        password-hash: "$2y$10$9ML4b9rfj/7srBC9Ii0Cg.DWWR8nUSz/MzHTAAp/GJBGPr0vGbk8."
+        role: ADMIN
+      - username: alice
+        password-hash: "$2y$10$wTDg63vvT1uU.Drf7vpJs.0sJCAn5V930sIDtzYLWY.Zj/1I1SLrC"
+        role: USER
+      - username: bob
+        password-hash: "$2y$10$rwj6s75yIv7dcSfl3XkrZeG3nN3pP89RsE.f6sM2YS1E366np5eUa"
+        role: USER

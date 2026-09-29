@@ -1,6 +1,6 @@
 # Requirements
 
-Last updated: 2026-09-29 (G3 US-004, D48–D49). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
+Last updated: 2026-09-29 (US-005 escalation, D57). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
 
 ## Functional requirements
 
@@ -84,6 +84,14 @@ Last updated: 2026-09-29 (G3 US-004, D48–D49). Decisions below were made by th
 | D47 | Text column types in V1 | `short_code` and `original_url` are **`TEXT NOT NULL`**, not `VARCHAR(n)`. `ck_short_url_code_format` is the only length and format limit on `short_code`. A new `ck_short_url_original_url_length CHECK (char_length(original_url) <= 2048)` limits `original_url`. Reason: database constraints are the final guarantee, and `VARCHAR(n)` silently truncates over-length input when the excess is trailing spaces. Application-layer validation (US-004) must still reject such input without trimming. |
 | D48 | Reserved-word configuration | The D29 default words (`api, actuator, v3, error, health, admin, login, logout, static, assets, docs`) are **always reserved** as a built-in set. The property `shortener.alias.additional-reserved-words` **adds** words to it and can never remove a built-in. Matching stays case-insensitive (D29). |
 | D49 | Target host scope | IP-literal, `localhost` and private or internal hosts are **accepted** for now: the service only redirects and never fetches targets, so there is no SSRF surface. Revisit if the service ever fetches targets (previews, reachability checks). Non-ASCII (IDN) hosts are **rejected**; clients must submit punycode, and the create API documentation (US-006) must say so. |
+| D50 | User configuration | Users are a list at `app.security.users[n].{username, password-hash, role}` (role `USER` or `ADMIN`), validated at startup (fail-fast). There are no defaults in `application.yml` (D24): the `local` profile gets them via `.env`, and the `test` profile via `application-test.yml`. |
+| D51 | Username bounds | Usernames are 1–100 lowercase ASCII characters with no whitespace, validated at startup, and unique. `ShortUrl` guards the actor values it stores using the shared constant `ShortUrl.MAX_ACTOR_LENGTH`. **No migration**: `created_by` and `deleted_by` stay `VARCHAR(100)`. |
+| D52 | Authentication logging | 401 and 403 responses log **no usernames**, attempted or authenticated, and **no client IPs**. |
+| D53 | Password hashing | BCrypt with cost **fixed at 10**. Every configured hash must be a cost-10 BCrypt hash, never plaintext, so unknown-user timing matches known-user timing. |
+| D54 | Username matching at login | Case-insensitive (Spring's in-memory user store behaviour). The stored actor is always the configured, lowercase username. |
+| D55 | Invalid credentials on public paths | Invalid HTTP Basic credentials get `401 AUTHENTICATION_REQUIRED` on public paths too (Spring default). |
+| D56 | Error body extensions | Every error body shares the base `ProblemDetail` keys (`type`, `title`, `status`, `detail`, `instance`, `errorCode`). Security errors (401/403) carry `errorCode` as their **only** extension. Other error types, such as validation errors (US-006), may add documented extensions on top of the base shape. |
+| D57 | Default access rule | The final filter-chain rule is **`anyRequest().denyAll()`**. Anything no explicit rule matches is refused: anonymous callers get `401 AUTHENTICATION_REQUIRED` through the entry point, and authenticated callers get `403 ACCESS_DENIED`. This closes case- and path-variant bypasses of role rules (for example `DELETE /API/v1/urls/{code}`). The ADMIN delete rule is `DELETE /api/v1/urls/**`. |
 
 ## Environment and platform decisions
 
