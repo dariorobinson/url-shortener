@@ -1,6 +1,6 @@
 # Requirements
 
-Last updated: 2026-09-29 (G2 US-001, D39–D43). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
+Last updated: 2026-09-29 (G3 US-002, D47). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
 
 ## Functional requirements
 
@@ -78,6 +78,10 @@ Last updated: 2026-09-29 (G2 US-001, D39–D43). Decisions below were made by th
 | D41 | Testcontainers image | **`postgres:18.6-alpine`**, the same as Compose. |
 | D42 | Lombok-generated code in coverage | `lombok.config` with `lombok.addLombokGeneratedAnnotation = true`, so JaCoCo ignores Lombok-generated code. Engineer-approved refinement of D38. |
 | D43 | Mockito agent | Mockito is loaded as an explicit `-javaagent` in the Surefire and Failsafe JVMs (no dynamic self-attach). |
+| D44 | Deleted-row consistency CHECK | `ck_short_url_deleted_consistency` = `(status = 'DELETED' AND deleted_at IS NOT NULL AND deleted_by IS NOT NULL) OR (status <> 'DELETED' AND deleted_at IS NULL AND deleted_by IS NULL)`, so a non-deleted row can never carry deletion audit fields. |
+| D45 | Timestamp ownership | The application sets `created_at`/`updated_at` from the injected `Clock`, truncated to microseconds. The database `now()` defaults remain for raw SQL inserts only. |
+| D46 | State changes on deleted links | Any state change on a `DELETED` link, including a second soft delete, throws `ShortUrlDeletedException` and leaves the row unchanged; the API maps it to `404 SHORT_URL_NOT_FOUND` (D13, D36). |
+| D47 | Text column types in V1 | `short_code` and `original_url` are **`TEXT NOT NULL`**, not `VARCHAR(n)`. `ck_short_url_code_format` is the only length and format limit on `short_code`. A new `ck_short_url_original_url_length CHECK (char_length(original_url) <= 2048)` limits `original_url`. Reason: database constraints are the final guarantee, and `VARCHAR(n)` silently truncates over-length input when the excess is trailing spaces. Application-layer validation (US-004) must still reject such input without trimming. |
 
 ## Environment and platform decisions
 

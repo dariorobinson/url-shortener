@@ -212,3 +212,96 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
   - Lesson: a checkpoint must only claim content that has actually been written to a file.
 - **Independent checks by the main session:** at G3, the main session re-ran `./mvnw -q clean verify` itself (exit 0; 14 tests, 0 failures; merged coverage report present). It also checked the G4 staging.
 - **Validation:** Before staging, checked that `mvnw` is staged as 100755 and that no `.env`, `target/` or `.claude/agent-memory/` files are staged. The committed code is the same code that passed `./mvnw -q clean verify` at G3; only docs have changed since.
+
+## Entry 13 — US-002 design (G2)
+
+- **Date:** 2026-09-29
+- **Task:** Architect design note for US-002 (domain model, V1 schema, repository). Committed baseline: `efa36e8` (C1).
+- **AI recommendation (architect):**
+  - **Migration:** `V1__create_short_url.sql` exactly as in the architecture, unless E1 is approved.
+  - **Entity:** `ShortUrl` created through a static factory with no setters. `IDENTITY` id, a `Long @Version` starting at 0, and `@Enumerated(STRING)` status.
+  - **Analytics columns (D27):** `click_count` and `last_accessed_at` are `insertable=false, updatable=false`. The factory mirrors their DB defaults in memory, so no `@Generated` re-read is needed.
+  - **Transitions:**
+    - `deactivate(Instant)` and `reactivate(Instant)` throw the D26 exceptions.
+    - Any transition on a DELETED link throws `ShortUrlDeletedException`, which maps to 404 in US-009.
+  - **Equality and logging:** identity equals/hashCode; `toString` limited to id, code, status and version, so no URL or username appears in logs.
+  - **Timestamps:** set from the injected Clock and truncated to microseconds.
+  - **Repository:** `findByShortCode` only, with no status filter.
+  - **Tests:** constraint tests use raw SQL and assert the SQLState and the constraint name. The AC9 test requires the version to reach 1, so an UPDATE really ran.
+  - **QA step:** the R5 change, plus a V1 success assertion in `FlywaySchemaHistoryIT`.
+- **Engineer decisions requested:**
+  - **E1:** tighten `ck_short_url_deleted_consistency`. The approved form accepts a non-deleted row with only one audit field set.
+  - **E2:** the application owns `created_at`/`updated_at`.
+  - **E3:** transitions on deleted links throw.
+- **Orchestrator validation:**
+  - Confirmed the E1 logic: with the current CHECK, an ACTIVE row with `deleted_at` set and `deleted_by` NULL evaluates `false = false`, which passes.
+  - Ran the code-format regex on a throwaway `postgres:18.6-alpine` container (collation en_US.utf8). `abc` and `ABC123` are accepted. `abcé`, `straße`, `ÀBC`, `abc٣`, `ab-c` and `ab` are rejected. The collation risk the architect raised does not occur on this image.
+  - Corrected the carry-over note's annotation name to `@SelectPackages`, which the architect identified.
+- **Engineer decision:** "approve all" (relayed). **Accepted.** E1, E2, E3 and the rest of the design note as written, including the qa-tester scope (R5 `@SelectPackages`, the V1 assertion in `FlywaySchemaHistoryIT`) and the mid-engineer carry-over (N1, N2). Recorded as D44 (tightened CHECK), D45 (the application owns timestamps, from the Clock, truncated to microseconds) and D46 (transitions on deleted links throw, mapped to 404). The optional AC6 wording change was not requested, so AC6 stays as written. The US-010 design inputs (the click UPDATE must not touch `updated_at`, must truncate to microseconds, and must use `clearAutomatically` or a separate transaction) are recorded in the US-010 story.
+- **AI-originated defect caught by agent review:**
+  - **Origin:** the flawed `ck_short_url_deleted_consistency` form `(status = 'DELETED') = (deleted_at IS NOT NULL AND deleted_by IS NOT NULL)` came from the main session's original planning SQL in the Task 0 `architecture.md`.
+  - **Detection:** the architect caught it during the US-002 design review, before any migration was written. The main session independently confirmed the logic: an ACTIVE row with only `deleted_at` set gives false = false, so it passes. The orchestrator confirmed the same.
+  - **Fix:** V1 uses the tightened form (D44), and `architecture.md` is updated.
+- **Rationale:** *(engineer to add)*
+
+## Entry 14 — US-002 implementation, QA, and review (G3)
+
+- **Date:** 2026-09-29
+- **Task:** Implement US-002 to the design approved at G2 (D44–D46).
+- **Mid-engineer:**
+  - **Built:** `V1__create_short_url.sql` (tightened CHECK), `ShortUrl`, `ShortUrlStatus`, three domain exceptions, `ShortUrlRepository`, four test classes plus the `PostgresErrors` helper, and carry-overs N1 and N2.
+  - **Checks:** ran three mutation checks. Removing `updatable=false`, removing `insertable=false`, and removing the DELETED guard each made the targeted test fail, and each was reverted. `@Version` started at 0 as designed, so no escalation was needed.
+  - **Deviation:** the design expected a 33-character code to fail the format CHECK (23514). PostgreSQL rejects it at `VARCHAR(32)` first (22001), so that case is now a separate test asserting 22001. No schema change was made.
+- **QA-tester:** R5 is done (`@SelectPackages("features")`, and the warning is gone). Added a V1 success assertion to `FlywaySchemaHistoryIT`. No defects found.
+- **Senior review, round 1: APPROVE.**
+
+  | ID | Severity | Finding | Resolution |
+  |---|---|---|---|
+  | R1 | SHOULD | Duplicate-code JPA test asserted only the exception type | Fixed by the mid-engineer |
+  | R2 | SHOULD | Stale `architecture.md` markers | Fixed by the orchestrator |
+  | R3, R4, R6 | NIT | Various | Fixed by the mid-engineer |
+  | R5 | NIT | Javadoc on the 22001 test | Waits for the engineer |
+
+  The reviewer also found that `VARCHAR(32)` silently truncates trailing spaces on over-length input. The orchestrator confirmed this on `postgres:18.6-alpine`.
+- **Senior review, round 2: APPROVE.** All fixes were verified. New NITs:
+  - **N1:** V1 and one test comment still cite `E1`. This must be fixed before V1 is committed.
+  - **N2:** an optional `updatedAt` assertion.
+- **Proposed review rules:** six, recorded verbatim in the US-002 Review log for the engineer to decide on.
+- **Engineer decision** (relayed; the engineer chose "Approve all", "TEXT + CHECK" and "Commit + push now" from the main session's structured question):
+  - **US-002 approved:** **Accepted**, subject to the fixes below passing.
+  - **R5, the 22001 split:** **Accepted**. Because of the TEXT change, the 33-character test now asserts the format CHECK (23514) instead.
+  - **Trailing-space truncation:** **Modified**. The orchestrator had recommended keeping `VARCHAR(32)` and validating at the application layer. The engineer chose the main session's alternative, recorded as D47: `short_code` becomes `TEXT` (the format CHECK is the only limit), `original_url` becomes `TEXT` with a new `ck_short_url_original_url_length` CHECK, and the US-004 no-trim design input is kept.
+  - **Pre-commit fixes N1, N2 and the R5 Javadoc:** **Accepted**.
+  - **Review rules:** 1, 2, 3 (extended by 5) and 4 are **Accepted** and added to `CLAUDE.md` by the main session. Rule 6 is **Rejected** as a duplicate.
+  - **Commit plan:** **Modified**. C2 is split: **C2a** is US-002 alone, committed now; **C2b** is US-003 and US-004.
+  - **G4:** pre-approved on three conditions: the build passes, the senior re-review is APPROVE, and the architect raises no problem. No push; the main session verifies and pushes.
+- **Rationale:** the database is the final guarantee (CLAUDE.md), and `VARCHAR(n)` truncates silently. Further rationale: *(engineer to add)*.
+- **Validation:** the orchestrator ran `./mvnw -q clean verify`. It passed with exit 0: Surefire 57/0 and Failsafe 11/0 (run/failed), 3 Cucumber scenarios, and merged LINE coverage 52/52. The orchestrator also inspected the V1 SQL and reproduced the truncation behaviour.
+
+## Entry 15 — US-002 fix round 2 (D47) and commit C2a (G4)
+
+- **Date:** 2026-09-29
+- **Task:** Apply D47 and the pre-commit fixes, re-verify, and make the conditional C2a commit, which the engineer pre-approved at G3 ("Commit + push now": commit only if the build passes, the review is APPROVE, and the architect raised no problem; the main session pushes).
+- **Session interruption:** the previous Claude Code session ended partway through this work. The main session resumed with the engineer's message "continue implementation". The orchestrator checked the working tree before continuing:
+  - Already done: V1 converted to TEXT, N1, N2, R5 (the 22001 test deleted), the D47 tests, and the G3 decision recorded in Entry 14.
+  - Missing: the QA re-run and the senior re-review. These were then carried out.
+- **Architect:** confirmed D47 with no problems.
+  - Hibernate's validate step compares JDBC type codes, and pgjdbc reports `text` as `VARCHAR`, so no mapping change was needed.
+  - The unique B-tree index on `short_code` is unaffected.
+  - `char_length` is the correct measure for D11.
+  - The design note and `architecture.md` were amended. The architect noted that `created_by` and `deleted_by` stay `VARCHAR(100)`; their values come from configured users, not request bodies.
+- **Mid-engineer:** V1 now uses `TEXT` plus `ck_short_url_original_url_length`.
+  - New tests cover a code of 32 characters plus a trailing space (rejected, not truncated) and URLs of 2049 characters, with and without a trailing space (rejected).
+  - At exactly 2048 characters, a URL is accepted unchanged, including one that ends in a space. A 2048-character multibyte URL is also accepted.
+  - The fix round also removed E-ids and § references from `src/`.
+  - A manual EXPLAIN showed `Index Scan using uk_short_url_short_code`.
+- **QA-tester:** re-ran the integration tests. No defects and no file changes.
+- **Senior review, round 3: APPROVE.** Three NITs:
+  - URL trailing-space cases assert only length, not `endsWith`.
+  - The EXPLAIN was run with a literal, not a prepared statement.
+  - A stale test count in the orchestrator's verification block (fixed).
+
+  Three more proposed review rules are recorded in the US-002 Review log for the engineer to decide on.
+- **Engineer decision:** G3 approval of US-002 is **Accepted** (from Entry 14). G4 for C2a was pre-approved on conditions, and the orchestrator confirmed all of them before committing.
+- **Rationale:** *(engineer to add)*
+- **Validation:** the orchestrator ran `./mvnw -q clean verify`: exit 0, Surefire 63/0 and Failsafe 11/0 (run/failed), including 3 Cucumber scenarios, and merged LINE coverage 52/52. Before committing, it confirmed `mvnw` is still 100755 and that no `.env`, `target/`, or `.claude/agent-memory/` files are staged.

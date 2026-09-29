@@ -68,6 +68,10 @@ Base package: `com.schwab.urlshortener`. `JAVA_HOME` must point to JDK 25.
 - Coverage data must be fresh on every build: never use JaCoCo `append=true` without deleting old `.exec` files first, or the merged gate is inflated by stale runs. Re-check whenever the gate configuration changes.
 - JaCoCo `merge` and `check` skip silently when an exec file is missing, so the build must fail loudly if merged coverage data is absent (keep the `requireFilesExist` enforcer check).
 - `IntegrationTestBase` subclasses must add nothing that changes the Spring context (`@MockitoBean`, `@TestPropertySource`, `@DynamicPropertySource`, extra `@Import`, etc.); each change starts a second context and a second PostgreSQL container.
+- Every database constraint-violation test (raw SQL or JPA) asserts both the SQLSTATE and the constraint name via `PostgresErrors`; asserting only the exception type is not enough.
+- Every "column is not written" / "value is not overwritten" test also asserts that the write actually happened (a version bump or a row count), so it cannot pass vacuously.
+- Code comments, Javadoc, test comments, and SQL migrations cite durable decision IDs (`Dnn`) — never design-gate IDs (`E1`, `G2-…`) or design-note section numbers (`§x.y`). This includes `src/main/resources/db/migration`.
+- Application-layer validation must reject values that exceed a length-limited `VARCHAR` column before insert; PostgreSQL silently truncates trailing spaces instead of raising an error.
 
 ## Post-task report (required at every story completion)
 

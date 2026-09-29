@@ -24,6 +24,9 @@
     <jacoco.version>0.8.15</jacoco.version>
     <junit-jupiter.version>5.14.4</junit-jupiter.version>
     <argLine></argLine>
+    <!-- N1: explicit default so ${skipTests} below never interpolates an undefined property.
+         -DskipTests on the command line (a user property) still overrides it. -->
+    <skipTests>false</skipTests>
     <!-- Skip the "merged .exec must exist" enforcer check whenever Surefire/Failsafe don't run
          (-DskipTests). Overridden to true by the profile below when -Dmaven.test.skip=true too. -->
     <coverage.gate.skip>${skipTests}</coverage.gate.skip>
@@ -206,7 +209,9 @@
                   </files>
                   <message>Merged JaCoCo execution data (target/jacoco-merged.exec) is missing, so the
                     coverage gate would silently pass without checking anything. Check the merge
-                    execution ran.</message>
+                    execution ran. To skip this check deliberately (for example together with
+                    -Djacoco.skip=true), pass -Dcoverage.gate.skip=true. It is skipped automatically
+                    with -DskipTests or -Dmaven.test.skip=true.</message>
                 </requireFilesExist>
               </rules>
             </configuration>

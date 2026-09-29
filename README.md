@@ -40,6 +40,10 @@ curl -s http://localhost:8080/actuator/health    # {"status":"UP"}
 
 This runs unit/slice tests (Surefire, `*Test.java`) against a Testcontainers PostgreSQL instance, then integration tests and Cucumber scenarios (Failsafe, `*IT.java`), merges JaCoCo coverage from both phases, and fails the build if merged line coverage drops below 70%. A Docker daemon must be running: there is no H2 fallback.
 
+To skip the coverage gate deliberately (for example when running with `-Djacoco.skip=true`), add
+`-Dcoverage.gate.skip=true`. The gate is skipped automatically with `-DskipTests` or `-Dmaven.test.skip=true`.
+Never skip it for a build that is being reviewed or committed.
+
 ## API usage *(pending — Tasks 6–9)*
 
 ## Configuration *(pending)*

@@ -46,6 +46,11 @@ As the system, I want every successful GET redirect on an active link to be reco
 ## Open questions
 - None. D16/D27 fix the entity-mapping/atomic-update split with US-002 (AC6 above: the click `UPDATE` never touches `version`, and the entity never overwrites the analytics columns), and D18/D32 fix `HEAD`'s status and public access; this story only needs to implement and test the "not counted" half.
 
+## Design inputs carried from US-002 (engineer-approved at US-002 G2)
+- The click-recording `UPDATE` must **not** change `updated_at`. That column reflects management changes only.
+- The click time must be taken from the injected `Clock` and **truncated to microseconds**, matching D45 and PostgreSQL's `timestamptz` resolution.
+- Any read of the `ShortUrl` after the click `UPDATE` in the same persistence context must not see stale values. Use `@Modifying(clearAutomatically = true)` or run the click recording in its own transaction.
+
 ## Design note
 *(architect)*
 

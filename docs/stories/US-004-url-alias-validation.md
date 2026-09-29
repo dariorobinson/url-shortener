@@ -41,6 +41,9 @@ Note: HTTP status codes and `errorCode` values for validation failures are wired
 ## Open questions
 - None. D28 defines "own host" (the `APP_BASE_URL` host, case-insensitive, trailing dot ignored) and D29 defines the reserved-word list, its configurability, and case-insensitive matching, including that a match against a *generated* code is treated as a collision and retried (implemented in US-006).
 
+## Design inputs carried from US-002 (engineer-approved at US-002 G3)
+- `AliasPolicy` must reject any alias that doesn't match `^[A-Za-z0-9]{3,32}$` **as submitted**. It must never trim or normalise the input. Include a test for a 32-character alias followed by a trailing space, which must be rejected. The same no-trim rule applies to `UrlValidator` for the 2048-character limit (D11, D47).
+
 ## Design note
 *(architect)*
 

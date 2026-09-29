@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-09-29 (US-001 design). **Status: planned.** Each section is marked *planned*, *designed (US-nnn)*, or *implemented (US-nnn)* as work progresses.
+Last updated: 2026-09-29 (US-002 design; D47 amendment at G3). Each section is marked *planned*, *designed (US-nnn)*, or *implemented (US-nnn)* as work progresses.
 
 ## Overview
 
@@ -39,7 +39,7 @@ Gates: G1 backlog · G2 design · G3 story completion · G4 commit · escalation
 
 Per story: design note → implementation → QA integration testing → review → fixes (≤ 2 rounds) → orchestrator-run build (incl. 70% coverage gate) → post-task report → engineer approval.
 
-## Build and test infrastructure — *designed (US-001), approved at G2; not yet implemented*
+## Build and test infrastructure — *implemented (US-001)*; carry-over R5/N1/N2 *implemented (US-002)*
 
 The full detail and exact configuration are in the US-001 Design note. This section is the durable summary.
 
@@ -59,25 +59,27 @@ Verified 2026-09-29 against the Spring Boot 3.5.16 BOM, Maven Central, and vendo
 | Lombok | 1.18.46 | Boot-managed | Needs `annotationProcessorPaths` on JDK 23+ |
 | Testcontainers | 1.21.4 | Boot-managed | |
 | Mockito / Byte Buddy | 5.17.0 / 1.17.8 | Boot-managed | |
-| JUnit Jupiter / Platform | 5.12.2 / 1.12.2 (Boot) → **5.14.4 proposed** | Boot-managed, override pending **E1** | Cucumber 7.34.9 requires Platform ≥ 1.13 |
+| JUnit Jupiter / Platform | **5.14.4** (Boot manages 5.12.2) | `junit-jupiter.version` override (D39) | Cucumber 7.34.9 requires Platform ≥ 1.13 |
 | springdoc-openapi | 2.8.17 | explicit | Built on Boot 3.5.x; 3.x is for Boot 4 |
 | Cucumber | 7.34.9 | explicit (BOM) | |
-| JaCoCo | 0.8.15 | explicit | Official Java 25 support since 0.8.14; gate placement pending **E2** |
+| JaCoCo | 0.8.15 | explicit | Official Java 25 support since 0.8.14; gate lives in US-001 (D40) |
 | Maven | 3.9.16 | Maven Wrapper (`only-script`) | Enforcer: JDK `[25,)`, Maven `[3.9.16,)` |
 | Surefire / Failsafe | 3.5.6 | Boot-managed | |
-| PostgreSQL image | `postgres:18.6-alpine` | Compose (D23); Testcontainers pending **E3** | Volume mounted at `/var/lib/postgresql` |
+| PostgreSQL image | `postgres:18.6-alpine` | Compose (D23) and Testcontainers (D41) | Volume mounted at `/var/lib/postgresql` |
 
 ### Build lifecycle (`./mvnw -q verify`)
 
 ```
 validate            enforcer: JDK ≥ 25, Maven ≥ 3.9.16 (fails before compilation)
-initialize          jacoco:prepare-agent → argLine (target/jacoco.exec); dependency:properties (Mockito agent path)
+initialize          clean stale target/jacoco*.exec; jacoco:prepare-agent → argLine (target/jacoco.exec); dependency:properties (Mockito agent path)
 compile             javac --release 25, Lombok via annotationProcessorPaths
 test                Surefire: **/*Test.java  (unit, @WebMvcTest, @RepositoryTest on Testcontainers)
 pre-integration-test jacoco:prepare-agent-integration → argLine (target/jacoco-it.exec)
 integration-test    Failsafe: **/*IT.java incl. CucumberIT (JUnit Platform suite → Cucumber engine)
 post-integration-test jacoco:merge → jacoco-merged.exec; jacoco:report → target/site/jacoco-merged/
-verify              failsafe:verify; jacoco:check BUNDLE LINE COVEREDRATIO ≥ 0.70, excluding UrlShortenerApplication only (D38)
+verify              enforcer requireFilesExist target/jacoco-merged.exec (skip: -Dcoverage.gate.skip=true; automatic with
+                    -DskipTests / -Dmaven.test.skip=true); failsafe:verify; jacoco:check BUNDLE LINE COVEREDRATIO ≥ 0.70,
+                    excluding UrlShortenerApplication only (D38)
 ```
 
 Surefire and Failsafe strip `SPRING_PROFILES_ACTIVE` and `SPRING_DATASOURCE_*` from the forked test JVMs.
@@ -105,14 +107,19 @@ support/IntegrationTestBase     support/@RepositoryTest
  @ActiveProfiles("test")         @ActiveProfiles("test")
         ▲            ▲
    *IT classes    cucumber/CucumberSpringConfiguration (@CucumberContextConfiguration)
-   (qa-tester)    cucumber/CucumberIT (@Suite @IncludeEngines("cucumber") @SelectClasspathResource("features"))
+   (qa-tester)    cucumber/CucumberIT (@Suite @IncludeEngines("cucumber") @SelectPackages("features"))
 ```
+
+`@SelectPackages("features")` replaces US-001's `@SelectClasspathResource("features")` (carry-over R5, *implemented (US-002)*). It removes Cucumber's discovery warning. `@Suite(failIfNoTests = true)` is the default, so discovering zero features fails the build.
 
 - **One container per test JVM.** Every `*IT` class and Cucumber resolve to the same Spring context-cache key, so they share one context and one container. All `@RepositoryTest` classes share another context and container in the Surefire JVM.
 - **Rule:** subclasses of `IntegrationTestBase` and `@RepositoryTest` classes add no context-affecting annotations (`@MockitoBean`, `@TestPropertySource`, extra `@Import`, `@DirtiesContext`, …). A controllable clock, when needed, is one shared `@Primary` bean in the shared test configuration.
 - **HTTP client:** `TestRestTemplate`. No H2 on the classpath (D21). No Testcontainers reuse mode.
+- **Repository tests** *(implemented (US-002))*:
+  - Constraint tests insert through `JdbcTemplate`, which joins the `@DataJpaTest` transaction, so they hit the DB constraint rather than the entity. They assert SQLSTATE plus constraint name from pgjdbc's `ServerErrorMessage`, with one failing statement per test because PostgreSQL aborts the transaction after an error.
+  - Tests flush and `clear()` the persistence context before reloading, and assert DB truth with `JdbcTemplate`.
 
-## Package structure (planned)
+## Package structure (planned; `domain/`, `domain/exception/`, `repository/` *implemented (US-002)*)
 
 ```
 com.schwab.urlshortener
@@ -122,23 +129,27 @@ com.schwab.urlshortener
 │   ├── dto/
 │   └── error/         # GlobalExceptionHandler, ErrorCode
 ├── service/
-├── domain/            # entities, enums
-│   └── exception/
+├── domain/            # ShortUrl entity, ShortUrlStatus
+│   └── exception/     # ShortUrlAlreadyDeactivated/AlreadyActive/Deleted exceptions
 ├── shortcode/         # ShortCodeGenerator + implementation
 ├── validation/        # UrlValidator, AliasPolicy
 ├── analytics/         # ClickRecorder + implementation
-└── repository/
+└── repository/        # ShortUrlRepository (Spring Data JPA)
 ```
 
-## Database schema (planned)
+## Database schema (V1 *implemented (US-002)*, amended by D47; V2 planned)
 
-**V1 — short_url**
+**V1 — short_url** (`V1__create_short_url.sql`). The SQL below is the approved schema.
+- `ck_short_url_deleted_consistency` was tightened at the US-002 design gate (D44). The original `(status = 'DELETED') = (both set)` form accepted a non-deleted row with only one audit field set.
+- `short_code` and `original_url` are `TEXT` with CHECK-enforced limits (D47). `VARCHAR(n)` silently truncates over-length input whose excess is only trailing spaces, so a named CHECK on `TEXT` is the only reliable limit.
+- `char_length` counts characters, matching D11's "2048 chars".
+- Hibernate `validate` accepts `String` ↔ `text` without mapping changes, because pgjdbc reports `text` as `Types.VARCHAR`.
 
 ```sql
 CREATE TABLE short_url (
   id               BIGSERIAL PRIMARY KEY,
-  short_code       VARCHAR(32)   NOT NULL,
-  original_url     VARCHAR(2048) NOT NULL,
+  short_code       TEXT          NOT NULL,
+  original_url     TEXT          NOT NULL,
   custom_alias     BOOLEAN       NOT NULL DEFAULT FALSE,
   status           VARCHAR(16)   NOT NULL DEFAULT 'ACTIVE',
   click_count      BIGINT        NOT NULL DEFAULT 0,
@@ -153,10 +164,14 @@ CREATE TABLE short_url (
   CONSTRAINT ck_short_url_status CHECK (status IN ('ACTIVE','DEACTIVATED','DELETED')),
   CONSTRAINT ck_short_url_click_count CHECK (click_count >= 0),
   CONSTRAINT ck_short_url_code_format CHECK (short_code ~ '^[A-Za-z0-9]{3,32}$'),
+  CONSTRAINT ck_short_url_original_url_length CHECK (char_length(original_url) <= 2048),
   CONSTRAINT ck_short_url_deleted_consistency CHECK (
-    (status = 'DELETED') = (deleted_at IS NOT NULL AND deleted_by IS NOT NULL))
+    (status = 'DELETED' AND deleted_at IS NOT NULL AND deleted_by IS NOT NULL)
+    OR (status <> 'DELETED' AND deleted_at IS NULL AND deleted_by IS NULL))
 );
 ```
+
+Column ownership (see the domain model below): the application writes every column except `id` (sequence), `version` (Hibernate), and `click_count`/`last_accessed_at` (only US-010's atomic UPDATE, D27). The `DEFAULT now()`/`'ACTIVE'`/`FALSE`/`0` values apply only to raw SQL inserts, except `click_count`, whose `DEFAULT 0` is how every new row gets its initial count. The unique constraint's index serves the redirect lookup. Its keys stay at most 32 bytes because PostgreSQL evaluates `ck_short_url_code_format` before inserting index entries. Application validation (US-004) must reject over-length or space-padded input as submitted, without trimming (D47).
 
 **V2 — click_event** (analytics)
 
@@ -170,6 +185,32 @@ CREATE INDEX ix_click_event_url_time ON click_event (short_url_id, clicked_at);
 ```
 
 **V3 — expiration** is designed after the brownfield impact analysis (Scenario 2).
+
+## Domain model — *implemented (US-002)*
+
+The full detail is in the US-002 Design note.
+
+**`ShortUrl`** (`domain`):
+- JPA entity on `short_url`. Lombok `@Getter`, `@NoArgsConstructor(access = PROTECTED)`, `@ToString(onlyExplicitlyIncluded = true)` (id, shortCode, status, version only: never the URL or usernames). No setters. Object-identity equality.
+- `id`: `Long`, `IDENTITY`. `status`: `@Enumerated(STRING)`. `version`: `Long @Version`. Hibernate seeds 0, and a `null` version tells Spring Data the entity is new.
+- Timestamps are `Instant` ↔ `timestamptz`.
+- Creation-time columns are `updatable = false`.
+- `click_count`/`last_accessed_at` are `insertable = false, updatable = false` (D27). The factory initializes them to the DB defaults (0/NULL), because Hibernate does not re-read non-insertable columns after INSERT.
+- Creation: `ShortUrl.create(shortCode, originalUrl, customAlias, createdBy, createdAt)`.
+
+**Time:** the application owns `created_at`/`updated_at`. Callers pass `Instant`s from the injected `Clock`, and every transition sets `updatedAt`. The entity truncates to microseconds (`timestamptz` resolution). Hibernate `@CreationTimestamp`/`@UpdateTimestamp` are not used: they bypass the `Clock` bean.
+
+**Lifecycle** (D26, D36; checks run in this order: arguments → deleted → redundant; a throwing call changes nothing):
+
+| From \ call | `deactivate(at)` | `reactivate(at)` | `softDelete(by, at)` |
+|---|---|---|---|
+| `ACTIVE` | → `DEACTIVATED` | `ShortUrlAlreadyActiveException` → 409 `SHORT_URL_ALREADY_ACTIVE` | → `DELETED` |
+| `DEACTIVATED` | `ShortUrlAlreadyDeactivatedException` → 409 `SHORT_URL_ALREADY_DEACTIVATED` | → `ACTIVE` | → `DELETED` |
+| `DELETED` | `ShortUrlDeletedException` → 404 `SHORT_URL_NOT_FOUND` | same | same (D46) |
+
+HTTP mappings are implemented in US-009.
+
+**`ShortUrlRepository`** (`repository`): `JpaRepository<ShortUrl, Long>` plus `findByShortCode` (case-sensitive, no status filtering). Integrity under concurrency comes from `uk_short_url_short_code`, `@Version`, and the D27 mapping, not from application pre-checks.
 
 ## REST API (planned)
 
