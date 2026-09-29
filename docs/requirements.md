@@ -1,6 +1,6 @@
 # Requirements
 
-Last updated: 2026-09-29 (G3 US-002, D47). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
+Last updated: 2026-09-29 (G3 US-004, D48–D49). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
 
 ## Functional requirements
 
@@ -82,6 +82,8 @@ Last updated: 2026-09-29 (G3 US-002, D47). Decisions below were made by the engi
 | D45 | Timestamp ownership | The application sets `created_at`/`updated_at` from the injected `Clock`, truncated to microseconds. The database `now()` defaults remain for raw SQL inserts only. |
 | D46 | State changes on deleted links | Any state change on a `DELETED` link, including a second soft delete, throws `ShortUrlDeletedException` and leaves the row unchanged; the API maps it to `404 SHORT_URL_NOT_FOUND` (D13, D36). |
 | D47 | Text column types in V1 | `short_code` and `original_url` are **`TEXT NOT NULL`**, not `VARCHAR(n)`. `ck_short_url_code_format` is the only length and format limit on `short_code`. A new `ck_short_url_original_url_length CHECK (char_length(original_url) <= 2048)` limits `original_url`. Reason: database constraints are the final guarantee, and `VARCHAR(n)` silently truncates over-length input when the excess is trailing spaces. Application-layer validation (US-004) must still reject such input without trimming. |
+| D48 | Reserved-word configuration | The D29 default words (`api, actuator, v3, error, health, admin, login, logout, static, assets, docs`) are **always reserved** as a built-in set. The property `shortener.alias.additional-reserved-words` **adds** words to it and can never remove a built-in. Matching stays case-insensitive (D29). |
+| D49 | Target host scope | IP-literal, `localhost` and private or internal hosts are **accepted** for now: the service only redirects and never fetches targets, so there is no SSRF surface. Revisit if the service ever fetches targets (previews, reachability checks). Non-ASCII (IDN) hosts are **rejected**; clients must submit punycode, and the create API documentation (US-006) must say so. |
 
 ## Environment and platform decisions
 

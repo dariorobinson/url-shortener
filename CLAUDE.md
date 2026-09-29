@@ -72,6 +72,16 @@ Base package: `com.schwab.urlshortener`. `JAVA_HOME` must point to JDK 25.
 - Every "column is not written" / "value is not overwritten" test also asserts that the write actually happened (a version bump or a row count), so it cannot pass vacuously.
 - Code comments, Javadoc, test comments, and SQL migrations cite durable decision IDs (`Dnn`) — never design-gate IDs (`E1`, `G2-…`) or design-note section numbers (`§x.y`). This includes `src/main/resources/db/migration`.
 - Application-layer validation must reject values that exceed a length-limited `VARCHAR` column before insert; PostgreSQL silently truncates trailing spaces instead of raising an error.
+- Length-limit tests cover the limit, the limit plus one, and the limit plus a trailing space, and read the stored value back.
+- Character limits use `char_length` (characters, not bytes), pinned by a multibyte test.
+- Security-sensitive dependencies (random sources, password encoders, key material) are injected by their concrete secure type or built inside the consuming bean method — never published as beans of a broad type (e.g. `RandomGenerator`) that a later `@Primary` bean could silently replace.
+- Startup-failure tests (`ApplicationContextRunner` or full context) assert the specific exception type in the cause chain and the exact property/field name — never only `hasFailed()`.
+- When a domain bound is checked in more than one application layer, all checks reference one shared constant, not repeated literals.
+- Public constructors and factory methods that validate their arguments document each thrown exception with `@throws`.
+- Configuration-binding failure tests assert the exception type and the property/field name, and each negative test has a positive counterpart using the same property-source mechanism, so a key that never binds cannot pass silently.
+- Tests that bind a property from an environment-style key add it through a `SystemEnvironmentPropertySource` and assert the bound (or rejected) value; `withPropertyValues("UPPER_SNAKE=...")` never maps to the dotted property.
+- When security depends on a library's strictness (e.g. URL parsing), known bypass inputs are pinned as explicit regression tests.
+- Every case conversion, in production code and tests, uses `Locale.ROOT`.
 
 ## Post-task report (required at every story completion)
 

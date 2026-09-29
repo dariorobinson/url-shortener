@@ -63,6 +63,11 @@ As an authenticated USER (or ADMIN), I want to submit a long URL, optionally wit
 ## Open questions
 - The response JSON field set for a created/detail resource is still not fully specified. D33 fixes that the body includes `shortUrl` (built from `APP_BASE_URL`, never the `Host` header) and that `Location` is `/api/v1/urls/{code}`, but the complete field list (e.g. whether `clickCount`/`lastAccessedAt` appear on create, exact field names/casing) still needs design-gate confirmation and must match US-007's response shape exactly.
 
+## Design inputs carried from US-004 (engineer-approved at US-004 G3)
+- Store exactly the `originalUrl` string that `UrlValidator` validated. Never store `URI.toString()` or a normalised form (D11, D47).
+- Call `AliasPolicy.isValid` on each **generated** code; a reserved-word match counts as a collision and triggers a retry (D29, D48).
+- The OpenAPI documentation for `POST /api/v1/urls` must state that non-ASCII (IDN) hosts are rejected and that clients must submit punycode (D49).
+
 ## Design note
 *(architect)*
 

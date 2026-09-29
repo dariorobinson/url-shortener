@@ -305,3 +305,120 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
 - **Engineer decision:** G3 approval of US-002 is **Accepted** (from Entry 14). G4 for C2a was pre-approved on conditions, and the orchestrator confirmed all of them before committing.
 - **Rationale:** *(engineer to add)*
 - **Validation:** the orchestrator ran `./mvnw -q clean verify`: exit 0, Surefire 63/0 and Failsafe 11/0 (run/failed), including 3 Cucumber scenarios, and merged LINE coverage 52/52. Before committing, it confirmed `mvnw` is still 100755 and that no `.env`, `target/`, or `.claude/agent-memory/` files are staged.
+- **Push (G4 follow-up):** the engineer said "approve all". The main session verified `34489d5` (parent `efa36e8`, clean tree, no forbidden files, 25 files) and **pushed it; `origin/main` is now `34489d5`**. The engineer **Accepted** round-3 review rules 1 and 3, which the main session added to `CLAUDE.md` (uncommitted, to go in C2b). Rule 2 was **Rejected** as too fine-grained.
+
+## Entry 16 — US-003 short-code generator (start)
+
+- **Date:** 2026-09-29
+- **Task:** Implement US-003 without a design note, because its frontmatter has `requires_design_approval: false`. The engineer approved this ("approve all").
+- **Constraints given:** D6 (Base62, case-sensitive), SecureRandom, configurable length (default 7) and max attempts (default 5), both validated at startup. Reserved-word handling for generated codes follows D29.
+  - The relayed message cited "D28/D37" for reserved words. In `requirements.md` that rule is D29; D28 is own host and D37 is HSTS. The orchestrator treated this as a citation slip, because the behaviour described matches D29 exactly.
+  - As the US-003 story's Out of scope states, the reserved-word retry is service-layer logic in US-006, and the generator stays pure.
+- **Housekeeping:** clean up the stale design-note section reference in `JvmAgentIT.java:15` (owned by the qa-tester).
+- **Mid-engineer:**
+  - Built the `ShortCodeGenerator` interface, `SecureRandomShortCodeGenerator` (Base62, `nextInt(62)` with no modulo bias), the `ShortCodeProperties` record (`@Validated`, length 3–32 default 7, max-attempts at least 1 default 5), `ShortCodeConfig`, and unit plus `ApplicationContextRunner` tests.
+  - Made six small design choices itself and flagged all of them. The main ones: `new SecureRandom()` rather than `getInstanceStrong()`, and publishing `SecureRandom` as a bean injected as `RandomGenerator`.
+- **Orchestrator check:** the mid-engineer's first run was unusually short (8 tool uses, about 2.5 minutes). The orchestrator confirmed from disk that the files and Surefire reports exist before continuing.
+- **QA-tester:**
+  - Removed the design-note pointer from the `JvmAgentIT` Javadoc (now cites D43).
+  - Added `ShortCodeGeneratorWiringIT`: the bean is wired with its defaults in the full context, and 50 generated codes are inserted through `ck_short_url_code_format` and the unique constraint.
+  - No defects.
+- **Senior review, round 1: APPROVE.**
+
+  | ID | Severity | Finding |
+  |---|---|---|
+  | R1 | SHOULD | Security: the random source is published as a broadly typed bean, which a later `@Primary` bean could silently replace. Flagged as an engineer decision |
+  | R2 | SHOULD | Package cycle between `shortcode` and `config` |
+  | R3 | SHOULD | No length validation in the constructor |
+  | R4 | SHOULD | Startup-failure tests asserted only `hasFailed()` |
+  | R5 | SHOULD | The 3–32 bound is not tied to `ck_short_url_code_format` or D6 |
+  | R6–R9 | NIT | Various |
+
+  The mid-engineer fixed R2, R3, R4, R5 (citations only), R8 and R9. The qa-tester fixed R7. R1, R6 and R5's possible D-id were held for the engineer.
+- **Senior review, round 2: APPROVE.** R4 was confirmed to fail on any unrelated startup failure. New NITs: N1 (duplicated 3–32 literals; a shared constant is suggested) and N2–N5.
+- **Proposed review rules:** five, recorded verbatim in the US-003 Review log.
+- **Engineer decision:** "approve all" (relayed). **Accepted:**
+  - **R1:** do not publish `SecureRandom` as a bean; build it inside the generator bean method.
+  - **R6:** keep the class name.
+  - **Random source:** `new SecureRandom()`, the platform default.
+  - **AC5:** accept the statistical flake (about 1 in 70,000).
+  - **R5:** no new D-id; D6 plus the constraint name is enough.
+  - **Final fix round:** R1, N1 (shared 3–32 constants), N2, N3 and N5 in one round, the last allowed. N4 stays open.
+  - **Review rules:** rules 1, 4 (replacing 2) and 5 go into `CLAUDE.md`; the main session added them, uncommitted, for C2b. Rule 3 is **Rejected**, since the durable-ID rule covers it.
+  - **Next:** after an APPROVE re-review and a passing build, set US-003 to Done and start US-004. C2b is **not** pre-approved.
+- **Rationale:** *(engineer to add)*
+- **Validation:** the orchestrator ran `./mvnw -q clean verify`: exit 0, Surefire 92/0, Failsafe 13/0 (run/failed), merged LINE coverage 66/66.
+- **Fix round 2 (final):**
+  - The mid-engineer applied R1: no `SecureRandom` or `RandomGenerator` bean; it is built inside the generator bean method, and tests assert the bean is absent. It also applied N1 (public `MIN_LENGTH`/`MAX_LENGTH` used by `@Min`/`@Max`), N2, N3 and N5.
+  - **Process finding:** the mid-engineer reported that the generator file on disk was stale and rewrote it. The orchestrator's earlier read and passing build showed this was inaccurate. The senior-engineer confirmed every approved behaviour is intact.
+- **Senior review, round 3: APPROVE.** New NITs:
+  - **N6:** coverage figure should be 65/65 (fixed).
+  - **N7:** restore the constructor's `@throws` Javadoc. Still open, because fix rounds are used up.
+  - **N8:** QA-notes text out of date (fixed with an orchestrator addendum).
+
+  Two more proposed rules are recorded in the story.
+- **Validation:** the orchestrator ran `./mvnw -q clean verify`: exit 0, Surefire 92/0, Failsafe 13/0 (run/failed), merged LINE coverage 65/65. **US-003 set to Done.**
+
+## Entry 17 — US-004 URL and alias validation (start)
+
+- **Date:** 2026-09-29
+- **Task:** Implement US-004 without a design note, because its frontmatter has `requires_design_approval: false`. The engineer approved this.
+- **Carried design input (US-002 G3, D47):** reject length and format violations on the raw input, and never trim. This includes a test for a 32-character alias with a trailing space.
+- **Mid-engineer:**
+  - Built `UrlValidator`, `AliasPolicy`, the `HttpUris` strict parser, `AppProperties` (`app.base-url` from `APP_BASE_URL`, `@NotBlank` plus a custom `@HttpBaseUrl`), `AliasProperties` (`shortener.alias.reserved-words`, defaulting to D29), `ValidationConfig`, and 132 unit and `ApplicationContextRunner` tests.
+  - Nine decisions were flagged for the engineer. The main ones: strict `java.net.URI` parsing; reject any userinfo; `codePointCount` to match `char_length`; the base URL rejects userinfo but allows a path; setting the reserved-word property replaces the default list; blank entries are ignored.
+  - Open questions it raised: IP/localhost/private hosts, IDN hosts, and an empty reserved-word list.
+- **Orchestrator check:** the report was compact for 224 tests, so the orchestrator confirmed the files and Surefire reports on disk.
+- **QA-tester:** added `ValidationWiringIT` (full context: own host is `localhost` from the test profile, and the D29 default list is active). No defects.
+- **Senior review, round 1: CHANGES_REQUIRED.**
+
+  | ID | Severity | Finding |
+  |---|---|---|
+  | R1 | BLOCKING | Vacuous env-binding test: `withPropertyValues("APP_BASE_URL=…")` never binds |
+  | R2 | SHOULD | Wrong stated reason for not using a regex |
+  | R3 | SHOULD | The base URL accepts a query or fragment |
+  | R4 | SHOULD | Bypass inputs are not pinned as tests |
+  | R5 | NIT | Where the length constants live |
+  | R6 | NIT | Default-locale `toUpperCase` in the IT |
+  | R7 | NIT | A misfiled test case |
+  | R8 | NIT | Lone surrogates |
+  | R9 | NIT | The uncovered private constructor |
+
+  The reviewer also wrongly said CLAUDE.md lacks the startup-failure rule; the orchestrator pointed to line 78, and the reviewer accepted the correction. The mid-engineer fixed R1, R2, R4 and R7, and the qa-tester fixed R6. R3, R5 and R8 are held for the engineer.
+- **Senior review, round 2: APPROVE.** R1 was confirmed no longer vacuous, and the R4 inputs were checked with jshell. R10, the lost severities in the review log, was fixed by the orchestrator.
+- **Proposed review rules:** six, recorded verbatim in the US-004 Review log.
+- **Engineer decision:** "approve all" (relayed). **Accepted:**
+  - **R3:** the base URL rejects a query or fragment.
+  - **D48:** the D29 words are always-on built-ins, and `shortener.alias.additional-reserved-words` adds to them. This **modifies** the mid-engineer's replace behaviour, and makes the empty-list question moot.
+  - **R8:** URLs that can't be encoded as UTF-8 are rejected.
+  - **D49:** IP, localhost and private hosts are accepted for now; IDN hosts are rejected and clients send punycode. The US-006 API docs must say so; this is recorded as a design input in the US-006 story.
+  - **R5:** the constants stay where they are.
+  - **Flagged defaults:** all nine approved, with 3, 8 and 9 as modified.
+  - **Final fix round:** R3, D48, R8 and US-003 N7.
+  - **Review rules:** 2, 3, 5, 6 and 7 go into `CLAUDE.md` (the main session added them, uncommitted, for C2b). Rules 1 and 8 are **Rejected**, and 4 was replaced by 7.
+  - **C2b:** **not** pre-approved.
+- **Rationale:** *(engineer to add)*
+- **Validation:** the orchestrator ran `./mvnw -q clean verify`: exit 0, Surefire 235/0, Failsafe 18/0 (run/failed), merged LINE coverage 110/111.
+- **Fix round 2 (final):**
+  - The mid-engineer applied:
+    - **R3:** `HttpBaseUrl` rejects a query or fragment, including an empty `?` or `#`.
+    - **D48:** `AliasPolicy.BUILT_IN_RESERVED_WORDS` plus `shortener.alias.additional-reserved-words`; the old property is removed.
+    - **R8:** a UTF-8 `canEncode` check, with a new encoder per call.
+    - **US-003 N7:** the `@throws` Javadoc is restored.
+    - **D49:** regression tests.
+  - The orchestrator confirmed each claim on disk.
+- **Senior review, round 3: APPROVE.**
+  - The mid-engineer had concluded that only the underscore env-var form binds a list property. The reviewer showed from the Boot 3.5.16 bytecode that this is **false in production**, because the tests' property sources are not named `systemEnvironment`. Both forms bind. The orchestrator added a correction to the story.
+  - Open findings:
+    - **R11 (SHOULD):** name the test sources correctly and test both forms.
+    - **R12 (SHOULD):** `@throws` on the `UrlValidator` constructor.
+    - **R14, R15 (NIT).**
+  - Three more proposed review rules.
+- **Validation:** the orchestrator ran `./mvnw -q clean verify`: exit 0, Surefire 263/0, Failsafe 18/0 (run/failed), merged LINE coverage 118/119. **US-004 set to Done.**
+
+## Entry 18 — Commit C2b (G4)
+
+- **Date:** 2026-09-29
+- **Task:** Commit C2b: US-003, US-004, and the engineer-approved `CLAUDE.md` review rules.
+- **Engineer decision:** *(pending G4; not pre-approved)*
+- **Rationale:** *(engineer to add)*

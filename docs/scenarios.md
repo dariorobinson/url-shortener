@@ -18,8 +18,8 @@ See [requirements.md](requirements.md). The ambiguous requirements were resolved
 | 0 | Repository and documentation skeleton | Done (pending review) |
 | 1 | Maven project, Spring Boot app, Flyway, Docker Compose, Testcontainers base | Done (US-001) |
 | 2 | Domain model, V1 schema, repository | Done (US-002) |
-| 3 | Short-code generator | Planned |
-| 4 | URL and alias validation | Planned |
+| 3 | Short-code generator | Done (US-003) |
+| 4 | URL and alias validation | Done (US-004) |
 | 5 | Security foundation (`USER` / `ADMIN`, 401/403) | Planned |
 | 6 | Create/read API and error handling | Planned |
 | 7 | Redirect | Planned |
@@ -49,6 +49,29 @@ See [architecture.md](architecture.md).
   - **Review:** APPROVE. One SHOULD finding (R1) and NITs were fixed. The reviewer found silent `VARCHAR` trailing-space truncation, which needs an engineer decision.
   - **Validation:** the orchestrator ran `./mvnw -q clean verify` (68 tests, 0 failures, LINE coverage 100%).
   - **Engineer's G3 decision:** `short_code` and `original_url` become `TEXT`, with CHECK constraints as the only length limits (D47). The re-review approved, and the final build was 74 tests, 0 failures. Committed alone as C2a.
+- **US-003 (Task 3):**
+  - **Design:** none. The engineer approved going straight to implementation.
+  - **Implementation:** the mid-engineer delivered a `SecureRandom` Base62 generator (D6) with validated `shortener.code.*` properties, 3–32 characters long and at least one attempt.
+  - **QA:** the qa-tester added a wiring IT that inserts generated codes through `ck_short_url_code_format`, and cleaned up the `JvmAgentIT` comment.
+  - **Review:** APPROVE in both rounds. The SHOULD findings were fixed: removed a package cycle, added constructor validation, and made the startup-failure assertions precise. How the random source is exposed as a bean went to the engineer.
+  - **Validation:** the orchestrator ran `./mvnw -q clean verify` (105 tests, 0 failures, LINE coverage 100%). In the final round, the engineer approved removing the `SecureRandom` bean (R1) and sharing the 3–32 constants (N1). Final build: 105 tests, 0 failures.
+- **US-004 (Task 4):**
+  - **Design:** none. The engineer approved going straight to implementation.
+  - **Implementation:** the mid-engineer delivered `UrlValidator` and `AliasPolicy`, pure and boolean-returning.
+    - URLs are parsed strictly with `java.net.URI`: http or https only, a non-empty host, and no userinfo of any kind.
+    - URL length counts code points, up to 2048 (D11, D47).
+    - The own-host check matches the `APP_BASE_URL` host exactly and case-insensitively, ignoring one trailing dot (D28).
+    - Aliases are Base62, 3–32 characters, never trimmed (D6, D47), and checked case-insensitively against configurable reserved words (D29).
+    - `app.base-url` is required and validated at startup.
+  - **QA:** the qa-tester added a wiring IT for the full context.
+  - **Review:** round 1 found one BLOCKING issue, a vacuous environment-binding test, which was fixed. Round 2 approved. Five behaviour questions went to the engineer.
+  - **Validation:** the orchestrator ran `./mvnw -q clean verify` (253 tests, 0 failures, LINE coverage 99.1%).
+  - **Final round (engineer-approved):**
+    - The base URL rejects a query or fragment.
+    - Built-in reserved words, with additions only (D48).
+    - URLs that can't be encoded as UTF-8 are rejected.
+    - The D49 host-scope behaviour is pinned by regression tests.
+  - **Final build:** 281 tests, 0 failures.
 
 ---
 

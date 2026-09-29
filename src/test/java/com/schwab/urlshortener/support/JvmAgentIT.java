@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test;
  *
  * <p>{@code JvmAgentTest} (mid-engineer, Surefire) already proves this for {@code *Test} forks.
  * AC11 explicitly names both {@code *Test} and {@code *IT}/Cucumber forks, and Surefire and
- * Failsafe are separate forked JVMs (see the Design note's "Container count per build" note), so
+ * Failsafe are separate forked JVMs, each configured with its own {@code argLine} (D43), so
  * a passing Surefire assertion does not prove anything about the Failsafe fork that actually runs
  * {@code *IT} and Cucumber. This class is the Failsafe-side half of that proof.
  *
