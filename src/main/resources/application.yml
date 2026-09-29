@@ -1,0 +1,28 @@
+# Base configuration, used as-is in production. The datasource is supplied only through
+# SPRING_DATASOURCE_URL / SPRING_DATASOURCE_USERNAME / SPRING_DATASOURCE_PASSWORD.
+# Profiles: 'local' (Docker Compose) and 'test'. There is deliberately no 'prod' profile (D24).
+spring:
+  application:
+    name: url-shortener
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+server:
+  error:
+    include-stacktrace: never
+    include-message: never
+    include-binding-errors: never
+    include-exception: false
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      show-components: never

@@ -1,0 +1,4 @@
+# 'test' profile. The datasource is provided exclusively by Testcontainers @ServiceConnection.
+spring:
+  main:
+    banner-mode: off

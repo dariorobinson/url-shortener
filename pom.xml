@@ -1,0 +1,397 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.5.16</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>com.schwab</groupId>
+  <artifactId>url-shortener</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
+  <name>url-shortener</name>
+  <description>URL shortener service</description>
+
+  <properties>
+    <java.version>25</java.version>
+    <springdoc.version>2.8.17</springdoc.version>
+    <cucumber.version>7.34.9</cucumber.version>
+    <jacoco.version>0.8.15</jacoco.version>
+    <junit-jupiter.version>5.14.4</junit-jupiter.version>
+    <argLine></argLine>
+    <!-- Skip the "merged .exec must exist" enforcer check whenever Surefire/Failsafe don't run
+         (-DskipTests). Overridden to true by the profile below when -Dmaven.test.skip=true too. -->
+    <coverage.gate.skip>${skipTests}</coverage.gate.skip>
+  </properties>
+
+  <profiles>
+    <profile>
+      <!-- -Dmaven.test.skip=true skips compiling AND running tests, unlike -DskipTests.
+           When it is set, also skip the "merged .exec must exist" enforcer check (R3). -->
+      <id>skip-coverage-gate-when-maven-test-skip</id>
+      <activation>
+        <property>
+          <name>maven.test.skip</name>
+          <value>true</value>
+        </property>
+      </activation>
+      <properties>
+        <coverage.gate.skip>true</coverage.gate.skip>
+      </properties>
+    </profile>
+  </profiles>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>io.cucumber</groupId>
+        <artifactId>cucumber-bom</artifactId>
+        <version>${cucumber.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springdoc</groupId>
+      <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+      <version>${springdoc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <optional>true</optional>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-testcontainers</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.cucumber</groupId>
+      <artifactId>cucumber-java</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.cucumber</groupId>
+      <artifactId>cucumber-spring</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.cucumber</groupId>
+      <artifactId>cucumber-junit-platform-engine</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.platform</groupId>
+      <artifactId>junit-platform-suite</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <configuration>
+          <excludes>
+            <exclude>
+              <groupId>org.projectlombok</groupId>
+              <artifactId>lombok</artifactId>
+            </exclude>
+          </excludes>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <annotationProcessorPaths>
+            <path>
+              <groupId>org.projectlombok</groupId>
+              <artifactId>lombok</artifactId>
+              <version>${lombok.version}</version>
+            </path>
+          </annotationProcessorPaths>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>enforce-toolchain</id>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <requireJavaVersion>
+                  <version>[25,)</version>
+                  <message>This project requires JDK 25 or newer. Point JAVA_HOME at a JDK 25 installation.</message>
+                </requireJavaVersion>
+                <requireMavenVersion>
+                  <version>[3.9.16,)</version>
+                  <message>Maven 3.9.16 or newer is required. Use ./mvnw, which pins the version.</message>
+                </requireMavenVersion>
+              </rules>
+            </configuration>
+          </execution>
+          <!-- R3: fail loudly, instead of the JaCoCo gate silently no-op'ing, when the merged
+               .exec file is missing. Declared before the jacoco-maven-plugin block below, and
+               bound to the same 'verify' phase, so it runs first (Maven orders same-phase
+               executions by plugin declaration order, then execution order within a plugin). -->
+          <execution>
+            <id>require-jacoco-merged-exec</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <skip>${coverage.gate.skip}</skip>
+              <rules>
+                <requireFilesExist>
+                  <files>
+                    <file>${project.build.directory}/jacoco-merged.exec</file>
+                  </files>
+                  <message>Merged JaCoCo execution data (target/jacoco-merged.exec) is missing, so the
+                    coverage gate would silently pass without checking anything. Check the merge
+                    execution ran.</message>
+                </requireFilesExist>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-clean-plugin</artifactId>
+        <executions>
+          <!-- R1: prepare-agent/prepare-agent-integration default to append=true, and the
+               documented build command (./mvnw -q verify) never runs the clean lifecycle, so
+               jacoco.exec/jacoco-it.exec would otherwise accumulate coverage sessions across
+               builds and mask lines whose tests were later deleted or weakened. Delete only the
+               .exec files (not the whole target/ directory) before any test JVM forks. Works
+               regardless of forkCount, unlike append=false. -->
+          <execution>
+            <id>clean-stale-jacoco-exec-files</id>
+            <phase>initialize</phase>
+            <goals>
+              <goal>clean</goal>
+            </goals>
+            <configuration>
+              <excludeDefaultDirectories>true</excludeDefaultDirectories>
+              <filesets>
+                <fileset>
+                  <directory>${project.build.directory}</directory>
+                  <includes>
+                    <include>jacoco*.exec</include>
+                  </includes>
+                </fileset>
+              </filesets>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>expose-mockito-agent-path</id>
+            <goals>
+              <goal>properties</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <includes>
+            <include>**/*Test.java</include>
+          </includes>
+          <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar}</argLine>
+          <excludedEnvironmentVariables>
+            <excludedEnvironmentVariable>SPRING_PROFILES_ACTIVE</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>SPRING_DATASOURCE_URL</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>SPRING_DATASOURCE_USERNAME</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>SPRING_DATASOURCE_PASSWORD</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>SPRING_FLYWAY_URL</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>SPRING_FLYWAY_USER</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>SPRING_FLYWAY_PASSWORD</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>SPRING_APPLICATION_JSON</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>SPRING_CONFIG_LOCATION</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>SPRING_CONFIG_ADDITIONAL_LOCATION</excludedEnvironmentVariable>
+          </excludedEnvironmentVariables>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <configuration>
+          <includes>
+            <include>**/*IT.java</include>
+          </includes>
+          <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar}</argLine>
+          <excludedEnvironmentVariables>
+            <excludedEnvironmentVariable>SPRING_PROFILES_ACTIVE</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>SPRING_DATASOURCE_URL</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>SPRING_DATASOURCE_USERNAME</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>SPRING_DATASOURCE_PASSWORD</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>SPRING_FLYWAY_URL</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>SPRING_FLYWAY_USER</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>SPRING_FLYWAY_PASSWORD</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>SPRING_APPLICATION_JSON</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>SPRING_CONFIG_LOCATION</excludedEnvironmentVariable>
+            <excludedEnvironmentVariable>SPRING_CONFIG_ADDITIONAL_LOCATION</excludedEnvironmentVariable>
+          </excludedEnvironmentVariables>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <version>${jacoco.version}</version>
+        <executions>
+          <execution>
+            <id>prepare-agent-unit</id>
+            <goals>
+              <goal>prepare-agent</goal>
+            </goals>
+            <configuration>
+              <!-- R7: instrumentation scope only (not the D38 exclusions used by report/check
+                   below); keeps the agent from instrumenting third-party/test-support classes. -->
+              <includes>
+                <include>com.schwab.urlshortener.*</include>
+              </includes>
+            </configuration>
+          </execution>
+          <execution>
+            <id>prepare-agent-integration</id>
+            <goals>
+              <goal>prepare-agent-integration</goal>
+            </goals>
+            <configuration>
+              <includes>
+                <include>com.schwab.urlshortener.*</include>
+              </includes>
+            </configuration>
+          </execution>
+          <execution>
+            <id>merge-unit-and-integration</id>
+            <phase>post-integration-test</phase>
+            <goals>
+              <goal>merge</goal>
+            </goals>
+            <configuration>
+              <fileSets>
+                <fileSet>
+                  <directory>${project.build.directory}</directory>
+                  <includes>
+                    <include>jacoco.exec</include>
+                    <include>jacoco-it.exec</include>
+                  </includes>
+                </fileSet>
+              </fileSets>
+              <destFile>${project.build.directory}/jacoco-merged.exec</destFile>
+            </configuration>
+          </execution>
+          <execution>
+            <id>report-merged</id>
+            <phase>post-integration-test</phase>
+            <goals>
+              <goal>report</goal>
+            </goals>
+            <configuration>
+              <dataFile>${project.build.directory}/jacoco-merged.exec</dataFile>
+              <outputDirectory>${project.reporting.outputDirectory}/jacoco-merged</outputDirectory>
+              <excludes>
+                <exclude>com/schwab/urlshortener/UrlShortenerApplication.class</exclude>
+              </excludes>
+            </configuration>
+          </execution>
+          <execution>
+            <id>check-merged-line-coverage</id>
+            <goals>
+              <goal>check</goal>
+            </goals>
+            <configuration>
+              <dataFile>${project.build.directory}/jacoco-merged.exec</dataFile>
+              <excludes>
+                <exclude>com/schwab/urlshortener/UrlShortenerApplication.class</exclude>
+              </excludes>
+              <rules>
+                <rule>
+                  <element>BUNDLE</element>
+                  <limits>
+                    <limit>
+                      <counter>LINE</counter>
+                      <value>COVEREDRATIO</value>
+                      <minimum>0.70</minimum>
+                    </limit>
+                  </limits>
+                </rule>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
