@@ -13,9 +13,12 @@ import org.springframework.test.context.ActiveProfiles;
  * {@code @Import}/{@code @ActiveProfiles}, {@code @DirtiesContext}, or
  * {@code @SpringBootTest(properties=...)}). Any of these changes Spring's context cache key and
  * starts a second context and a second Testcontainers PostgreSQL container, breaking AC8.
+ *
+ * <p>The base itself imports {@link ShortCodeGeneratorTestConfiguration} (the scripted, {@code @Primary}
+ * short-code generator seam), so every {@code *IT} and Cucumber shares one context.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
-@Import(TestcontainersConfiguration.class)
+@Import({TestcontainersConfiguration.class, ShortCodeGeneratorTestConfiguration.class})
 public abstract class IntegrationTestBase {
 }

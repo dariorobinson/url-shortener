@@ -17,8 +17,9 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.savedrequest.NullRequestCache;
 
 /**
- * Stateless HTTP Basic security (D3, D30, D31, D32, D37, D55). Every URL rule lives in the one filter
- * chain below; there is no method security. The first matching rule wins, so the order matters.
+ * Stateless HTTP Basic security (D3, D30, D31, D32, D37, D55, D57). Every URL rule lives in the one filter
+ * chain below; there is no method security. The first matching rule wins, so the order matters. The final
+ * rule is {@code anyRequest().denyAll()} (D57): anything no explicit rule matches is refused.
  */
 @Configuration(proxyBeanMethods = false)
 class SecurityConfig {

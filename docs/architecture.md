@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-09-29 (US-005 implemented). Each section is marked *planned*, *designed (US-nnn)*, or *implemented (US-nnn)* as work progresses.
+Last updated: 2026-09-29 (US-006 implemented; content negotiation per D70). Each section is marked *planned*, *designed (US-nnn)*, or *implemented (US-nnn)* as work progresses.
 
 ## Overview
 
@@ -95,6 +95,11 @@ Surefire and Failsafe strip `SPRING_PROFILES_ACTIVE` and `SPRING_DATASOURCE_*` f
 - **Users** *(implemented (US-005))*:
   - Shape: `app.security.users[n].{username, password-hash, role}` (env `APP_SECURITY_USERS_<n>_USERNAME`, `…_PASSWORD_HASH` or `…_PASSWORDHASH`, `…_ROLE`).
   - None in `application.yml` or `application-local.yml` (D24), so a missing list fails startup. `local` reads them from the exported `.env`, and `test` from `application-test.yml` (admin, alice, bob).
+- **Request parsing and database error hygiene** *(implemented (US-006); US-006 Design note §1.2, §3.6)*:
+  - `spring.jackson.deserialization.fail-on-unknown-properties: true` and `spring.jackson.parser.strict-duplicate-detection: true`. Unknown fields and duplicate keys give `400 MALFORMED_REQUEST` for every endpoint.
+  - `spring.datasource.hikari.data-source-properties.logServerErrorDetail: false`, so pgjdbc exception messages never carry row values (URLs, usernames). The structured `ServerErrorMessage` fields stay available.
+  - `logging.level.org.hibernate.engine.jdbc.spi.SqlExceptionHelper: off`, because expected unique violations are handled and logged by the service.
+  - The test profile's `app.base-url` becomes `https://short.example`.
 
 ### Local runtime
 
@@ -119,28 +124,38 @@ support/IntegrationTestBase     support/@RepositoryTest
 - **One container per test JVM.** Every `*IT` class and Cucumber resolve to the same Spring context-cache key, so they share one context and one container. All `@RepositoryTest` classes share another context and container in the Surefire JVM.
 - **Rule:** subclasses of `IntegrationTestBase` and `@RepositoryTest` classes add no context-affecting annotations (`@MockitoBean`, `@TestPropertySource`, extra `@Import`, `@DirtiesContext`, …). A controllable clock, when needed, is one shared `@Primary` bean in the shared test configuration.
 - **HTTP client:** `TestRestTemplate`. No H2 on the classpath (D21). No Testcontainers reuse mode.
+- **Short-code test seam** *(implemented (US-006); US-006 Design note §6)*:
+  - `support/ScriptedShortCodeGenerator` is a `@Primary` bean in `support/ShortCodeGeneratorTestConfiguration`, which `IntegrationTestBase` imports alongside `TestcontainersConfiguration`. That keeps one context for every `*IT` and for Cucumber.
+  - It delegates to the production `shortCodeGenerator` bean unless a test has queued codes with `willReturn(...)`. `calls()` counts `generate()` calls.
+  - Tests call `reset()` before and after each test, and a Cucumber hook resets every scenario.
+  - It is thread-safe (`ConcurrentLinkedQueue`, `AtomicInteger`) and assumes serial test execution.
+  - Production code has no test mode.
+- **Forged `Host` headers** *(implemented (US-006))*: the Failsafe `argLine` gets `-Djdk.httpclient.allowRestrictedHeaders=host`. It is test-only and never set in runtime JVM options.
 - **Repository tests** *(implemented (US-002))*:
   - Constraint tests insert through `JdbcTemplate`, which joins the `@DataJpaTest` transaction, so they hit the DB constraint rather than the entity. They assert SQLSTATE plus constraint name from pgjdbc's `ServerErrorMessage`, with one failing statement per test because PostgreSQL aborts the transaction after an error.
   - Tests flush and `clear()` the persistence context before reloading, and assert DB truth with `JdbcTemplate`.
 
-## Package structure (planned; `domain/`, `domain/exception/`, `repository/` *implemented (US-002)*)
+## Package structure (planned; `domain/`, `domain/exception/`, `repository/` *implemented (US-002)*; US-006 entries *implemented (US-006)*)
 
 ```
 com.schwab.urlshortener
-├── config/            # properties, Clock, OpenAPI
+├── config/            # properties, Clock; OpenApiConfig (US-006: info, HTTP Basic security scheme)
 ├── security/          # implemented (US-005): SecurityConfig (filter chain, RoleHierarchy),
 │                      #   UserAccountsConfig/Properties, UserAccounts, Role,
 │                      #   ProblemDetailAuthenticationEntryPoint/AccessDeniedHandler/ResponseWriter
-├── api/               # controllers
-│   ├── dto/
-│   └── error/         # ErrorCode, ProblemDetails (implemented (US-005)); GlobalExceptionHandler (US-006)
-├── service/
+├── api/               # ShortUrlController, ShortUrlLinks (shortUrl/Location from APP_BASE_URL) (US-006)
+│   ├── dto/           # CreateShortUrlRequest, ShortUrlResponse (shared with US-007) (US-006)
+│   └── error/         # ErrorCode, ProblemDetails (implemented (US-005));
+│                      #   GlobalExceptionHandler, FieldViolation, ErrorResponseSchema (docs only) (US-006)
+├── service/           # ShortUrlService, CreateShortUrlCommand, ShortUrlView (US-006)
+│   └── exception/     # InvalidUrl/InvalidAlias/AliasAlreadyExists/ShortCodeUnavailable exceptions (US-006)
 ├── domain/            # ShortUrl entity, ShortUrlStatus
 │   └── exception/     # ShortUrlAlreadyDeactivated/AlreadyActive/Deleted exceptions
 ├── shortcode/         # ShortCodeGenerator + implementation
 ├── validation/        # UrlValidator, AliasPolicy
 ├── analytics/         # ClickRecorder + implementation
-└── repository/        # ShortUrlRepository (Spring Data JPA)
+└── repository/        # ShortUrlRepository (Spring Data JPA); PostgresServerErrors (US-006; the only
+                       #   class that imports org.postgresql.*)
 ```
 
 ## Database schema (V1 *implemented (US-002)*, amended by D47; V2 planned)
@@ -225,11 +240,30 @@ HTTP mappings are implemented in US-009.
 | Method | Path | Access | Success | Errors |
 |---|---|---|---|---|
 | GET | `/{code}` | Public | 302 | 404 (unknown / deleted / deactivated) |
-| POST | `/api/v1/urls` | USER, ADMIN | 201 + `Location` | 400, 401, 409 |
+| POST | `/api/v1/urls` | USER, ADMIN | 201 + `Location` | 400, 401, 406, 409, 415, 503 |
 | GET | `/api/v1/urls/{code}` | Owner, ADMIN | 200 | 401, 404 |
 | PATCH | `/api/v1/urls/{code}` | Owner, ADMIN | 200 | 400, 401, 404, 409 |
 | DELETE | `/api/v1/urls/{code}` | ADMIN | 204 | 401, 403, 404 |
 | GET | `/api/v1/urls/{code}/stats?from&to&timezone` | Owner, ADMIN | 200 | 400, 401, 404 |
+
+**Content negotiation rule (D70):** management API mappings declare `produces = application/json` (class-level on `ShortUrlController`, never `application/problem+json`); the redirect never does. Every `/api/v1/urls` operation therefore also returns 406 for an `Accept` that excludes `application/json`, DELETE included. The 406 is decided at mapping lookup, before the body is read or the service runs, so a rejected request never creates or changes anything. Precedence and the unparseable-`Accept` deviation are under *Error handling*.
+
+### Create short URL — *implemented (US-006)*
+
+The full detail is in the US-006 Design note.
+
+- **Security:** access-table rule 6 (`/api`, `/api/**` → `hasRole(USER)`, with ADMIN passing through the hierarchy) admits `POST /api/v1/urls`. `created_by` is `Authentication.getName()`, the configured lowercase username (D4, D51, D54).
+- **Request** `CreateShortUrlRequest {originalUrl, alias?}` (D17):
+  - `@NotBlank originalUrl` → `VALIDATION_FAILED`
+  - `UrlValidator` → `INVALID_URL`
+  - `AliasPolicy` → `INVALID_ALIAS`
+  - A missing or `null` `alias` is absent. `""` or whitespace is invalid, never trimmed (D47).
+  - Unknown fields and duplicate keys → `MALFORMED_REQUEST`.
+- **Response** `ShortUrlResponse`, shared with US-007: `shortCode`, `shortUrl`, `originalUrl`, `status`, `customAlias`, `clickCount`, `createdAt` (ISO-8601 UTC), `lastAccessedAt` (nullable, always present). There is no `createdBy`.
+  - `Location: /api/v1/urls/{code}` is relative.
+  - `shortUrl` is APP_BASE_URL with trailing slashes removed, plus `/` and the code, built by `api/ShortUrlLinks`. It never uses `Host` or forwarded headers (D33).
+- **Flow:** `ShortUrlController` → `ShortUrlService.create(CreateShortUrlCommand)` → `ShortUrlView`, mapped to `ShortUrlResponse` in `api`. Entities never leave `service`.
+- **Content negotiation (D70):** `@RequestMapping(path = "/api/v1/urls", produces = application/json)` on the class. An unacceptable `Accept` (for example `application/xml`, `text/plain` or `application/problem+json`) gets `406 NOT_ACCEPTABLE` with no row created (US-006 AC17).
 
 ### Access rules in the filter chain — *implemented (US-005)*
 
@@ -260,6 +294,11 @@ Rule: no handler other than the redirect may be mapped to a single path segment,
 - **Alternative:** native `INSERT … ON CONFLICT (short_code) DO NOTHING RETURNING id`.
 - **Trade-off:** `ON CONFLICT` avoids exceptions but bypasses JPA and ties the code to PostgreSQL; collisions are rare at 62⁷ ≈ 3.5 × 10¹², so readability wins.
 - Custom aliases are never retried: a uniqueness violation returns 409.
+- **Refinement** *(implemented (US-006); US-006 Design note §3)*:
+  - `ShortUrlService.create` is not `@Transactional`. Each attempt runs in a `TransactionTemplate` with `PROPAGATION_REQUIRES_NEW`, built in the service constructor (never published as a bean, which would replace Boot's default `transactionTemplate`), and calls `saveAndFlush` on a fresh entity. `DataIntegrityViolationException` is caught outside the template, after rollback.
+  - A generated code that fails `AliasPolicy.isValid` (D29, D48) consumes an attempt with no DB round trip.
+  - Only a unique violation of `uk_short_url_short_code` counts as a collision. It is recognised by `repository/PostgresServerErrors`, which reads pgjdbc `ServerErrorMessage` SQLSTATE `23505` plus the protocol constraint field, because Hibernate's constraint name is parsed from locale-dependent message text. Any other violation is rethrown and becomes `500 INTERNAL_ERROR`.
+  - Exhaustion after `shortener.code.max-attempts` gives `503 SHORT_CODE_UNAVAILABLE`, with no row committed.
 
 ### Analytics
 - **Recommendation:** atomic `UPDATE … SET click_count = click_count + 1, last_accessed_at = :now` plus an insert into `click_event`, behind a `ClickRecorder` interface. Daily stats are computed with `GROUP BY` in the caller's time zone.
@@ -303,3 +342,33 @@ RFC 7807 `ProblemDetail` responses with an `errorCode` extension, produced by a 
 - **`api/error/ProblemDetails.of(code, detail, requestUri)`** is the single factory for every error body. The shape is exactly `type` (`about:blank`), `title` (reason phrase), `status`, `detail` (generic), `instance` (request path, no query) and `errorCode`. `instance` is set because Spring MVC fills it in for controller-returned `ProblemDetail`s. `errorCode` is top-level only when serialized by the context's `ObjectMapper` (`ProblemDetailJacksonMixin`).
 - The security entry point and access-denied handler write through this factory. US-006's `@RestControllerAdvice` must use it too, so any later extension (such as a request ID) reaches every error.
 - Requests rejected by `StrictHttpFirewall` get Spring's plain 400, and requests to unknown paths get Boot's default error JSON, until US-006's advice handles them.
+
+*Implemented (US-006); US-006 Design note §4:*
+- **`api/error/GlobalExceptionHandler`** is the single `@RestControllerAdvice`. It extends `ResponseEntityExceptionHandler` and overrides `handleExceptionInternal`, so every Spring MVC exception body is rebuilt with `ProblemDetails.of`, and Spring's default `detail` texts never reach clients. Headers such as `Allow` and `Accept` are kept.
+- **Mappings:**
+  - `MethodArgumentNotValidException` → 400 `VALIDATION_FAILED`
+  - `HttpMessageNotReadableException` → 400 `MALFORMED_REQUEST`, with no parser text
+  - `InvalidUrlException` → 400 `INVALID_URL`
+  - `InvalidAliasException` → 400 `INVALID_ALIAS`
+  - `AliasAlreadyExistsException` → 409 `ALIAS_ALREADY_EXISTS`
+  - `ShortCodeUnavailableException` → 503 `SHORT_CODE_UNAVAILABLE`
+  - D31 extension (D61): 404 `RESOURCE_NOT_FOUND` for unmapped paths, 405 `METHOD_NOT_ALLOWED`, 406 `NOT_ACCEPTABLE`, 415 `UNSUPPORTED_MEDIA_TYPE`
+  - Other framework 4xx → 400 `MALFORMED_REQUEST`
+  - Anything else → 500 `INTERNAL_ERROR`, generic and logged once at ERROR. Spring Security exceptions are rethrown, not mapped.
+- **Field-level extension (D56):** `errors`, an array of `{field, message}` sorted by field, used only on `VALIDATION_FAILED`, `INVALID_URL` and `INVALID_ALIAS`. It never contains the rejected value.
+- **Shape parity:** advice bodies are serialized by Spring MVC with the context `ObjectMapper`, the same one the security writer uses. So `errorCode` is top-level on both paths, and 401/403 carry the base keys only.
+- **Still outside the advice:** `StrictHttpFirewall` rejections (plain 400) and errors raised in filters before the `DispatcherServlet` (Boot's `/error`).
+- **406 and precedence (D70):**
+  - 406 is raised at handler-mapping lookup (`ProducesRequestCondition`, then `RequestMappingInfoHandlerMapping.handleNoMatch`), never after the handler has run.
+  - Error bodies stay `application/problem+json` even though the mapping produces `application/json`. `DispatcherServlet.processHandlerException` removes `HandlerMapping.PRODUCIBLE_MEDIA_TYPES_ATTRIBUTE` before the advice runs, so the `ProblemDetail` fallback applies (Spring 6.2.19 source).
+  - Rules that follow from this: never add `application/problem+json` to `produces` (success bodies would be mislabelled), and never put `produces` on an `@ExceptionHandler` (it sets the attribute again and can empty the error body).
+  - **Precedence: 401 > 405 > 415 > 406 > 400.** Security (401, and 403 per D57) runs in the filter chain first. `handleNoMatch` checks method (405), consumes (415), then produces (406). Body errors (400) and service errors (409, 503) need a matched handler.
+  - **Known deviation from D61 (D70):** an **unparseable** `Accept` header still gets 406 and creates nothing, but the body is **empty**. Spring cannot negotiate a type for the error body either, and for a 4xx it drops the content.
+
+### OpenAPI — *implemented (US-006)*
+- `config/OpenApiConfig` declares `@OpenAPIDefinition` and one `@SecurityScheme` `basicAuth` (HTTP, `basic`).
+- The requirement is applied **per controller** (`@SecurityRequirement` on `ShortUrlController`), not globally, so the public redirect (US-008) is never documented as secured.
+- Error responses are declared on each operation with a documentation-only `Problem` schema (`api/error/ErrorResponseSchema`). springdoc skips advice handlers that have no `@ResponseStatus`, and it models `ProblemDetail` with a nested `properties` map.
+- Every error `@Content` names `mediaType = "application/problem+json"` explicitly. Otherwise springdoc falls back to the mapping's `produces` (`application/json`, D70) and documents errors under the wrong type. `POST /api/v1/urls` documents 406 (D61, D70).
+- The create operation states that IDN hosts are rejected and that clients must submit punycode (D49).
+- `/v3/api-docs` stays at springdoc's default path and stays public (access-table rule 3).

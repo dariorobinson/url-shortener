@@ -3,7 +3,7 @@ spring:
   main:
     banner-mode: off
 app:
-  base-url: http://localhost:8080
+  base-url: https://short.example
   security:
     # Test-only users (D50). Plaintext passwords live in support/TestUsers. Hashes are BCrypt cost 10 (D53).
     users:

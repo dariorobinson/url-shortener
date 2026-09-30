@@ -11,6 +11,18 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  jackson:
+    deserialization:
+      # D59: a misspelled field (for example "alais") must fail, not silently create a random code.
+      fail-on-unknown-properties: true
+    parser:
+      # D59: duplicate keys are a parser-differential risk (a proxy may read the first, the app the last).
+      strict-duplicate-detection: true
+  datasource:
+    hikari:
+      data-source-properties:
+        # D64: no row values (URLs, usernames) in pgjdbc exception messages or logs.
+        logServerErrorDetail: false
 server:
   error:
     include-stacktrace: never
@@ -26,3 +38,8 @@ management:
     health:
       show-details: never
       show-components: never
+logging:
+  level:
+    # D64: expected unique violations are handled and logged by the service; this also keeps the
+    # server's "Failing row contains" detail out of the logs.
+    org.hibernate.engine.jdbc.spi.SqlExceptionHelper: "off"

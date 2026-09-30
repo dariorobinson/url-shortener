@@ -540,5 +540,119 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
 
 - **Date:** 2026-09-29
 - **Task:** Commit C3: US-005 plus the engineer-approved `CLAUDE.md` review rules and the related doc updates.
+- **Engineer decision:** "approve all" (relayed). **Accepted:**
+  - Commit C3 exactly as staged. **Committed as `9ad1945`** (parent `7d441b7`, 38 files).
+  - The main session verifies and pushes (engineer-approved).
+  - R20, R22, R23 and R24 carry into US-006.
+  - The final re-review's rule 1 (each new endpoint names its filter-chain rule) is **Accepted**. The main session added it to `CLAUDE.md` unstaged, for C4. Rule 2 is **Rejected**.
+- **Validation:** after the commit, `git status --short` showed only ` M CLAUDE.md`.
+- **Rationale:** *(engineer to add)*
+
+## Entry 21 — US-006 create short URL API (design)
+
+- **Date:** 2026-09-29
+- **Task:** Architect design note for US-006. The story needs design approval, so it stops at G2.
+- **Inputs:**
+  - The US-004 design inputs.
+  - D56's validation extension.
+  - The OpenAPI Basic scheme (Q5 from US-005).
+  - Per-attempt transactions with a bounded retry on `uk_short_url_short_code`: 409 for a taken alias, 503 when attempts run out.
+  - Ownership (D4).
+  - The `SecurityConfig` rule that admits each new endpoint.
+  - The open response-field question.
+  - The R20–R24 carry-over from US-005.
+- **AI recommendation (architect):**
+  - **Security and ownership:** `POST /api/v1/urls` is admitted by the existing `/api/**` USER rule (no `SecurityConfig` change). `created_by` is `Authentication.getName()` (D4, D54).
+  - **Retry and errors:**
+    - Each attempt runs in its own REQUIRES_NEW `TransactionTemplate`; `create` itself is not transactional.
+    - A reserved-word match on a generated code uses up an attempt without touching the database.
+    - Only a violation of `uk_short_url_short_code` is retried. Any other constraint violation is a 500.
+    - A new production helper, `repository/PostgresServerErrors`, reads the SQLSTATE and constraint name, and the test helper delegates to it.
+    - One `GlobalExceptionHandler` extends `ResponseEntityExceptionHandler`, and every body goes through `ProblemDetails.of`. It adds an `errors: [{field, message}]` extension (D56) that never echoes the rejected value.
+  - **OpenAPI:** the HTTP Basic scheme is applied per controller, with a punycode note (D49).
+  - **Test seam:** a scripted `@Primary` test-only generator, imported by `IntegrationTestBase` itself (one shared context), and reset for each test and scenario.
+  - **AC9 test:** a repeated race plus a deterministic version using a lock held on another connection.
+- **Engineer decisions requested:**
+  - **A1:** the response field set, shared with US-007.
+  - **A2:** reject unknown JSON fields and duplicate keys (global Jackson setting).
+  - **A3:** an empty or whitespace alias gives 400 `INVALID_ALIAS`; `null` or absent means a generated code.
+  - **A4:** add `RESOURCE_NOT_FOUND`, `METHOD_NOT_ALLOWED`, `NOT_ACCEPTABLE` and `UNSUPPORTED_MEDIA_TYPE` to D31.
+  - **A5:** test-profile `app.base-url` = `https://short.example`.
+  - **A6:** report `INVALID_URL` before `INVALID_ALIAS`.
+  - **A7:** set `logServerErrorDetail=false` and silence `SqlExceptionHelper`, so a PostgreSQL "Failing row contains" message never logs the URL or username. The orchestrator had already seen that message in the US-002 truncation check.
+  - **A8:** give the PostgreSQL driver compile scope.
+  - **A9:** a Failsafe-only JVM option that lets tests forge the `Host` header.
+  - **Open questions:** Q2–Q4.
+- **Engineer decision:** "approve all" (relayed). **Accepted:** A1–A9, Q2–Q4 and the rest of the design note as written. They are recorded as D58–D69.
+- **Engineer guardrails:**
+  - `create` is never `@Transactional`.
+  - The AC9 lock-based test is never weakened into a sleep.
+  - The A9 flag goes in the Failsafe `argLine` only.
+  - A7 is verified by a test proving "Failing row contains" never reaches the logs, with a positive log-capture assertion.
+  - C4 is not pre-approved.
+- **C3 push:** the main session verified `9ad1945` (parent `7d441b7`, 38 files, no forbidden files, trailer present, the new CLAUDE.md endpoint rule correctly excluded) and **pushed it; `origin/main` is now `9ad1945`**.
+- **Rationale:** *(engineer to add)*
+- **Validation:** the architect cited the Spring Framework 6.2.19, Boot 3.5.16, Hibernate 6.6.53, pgjdbc 42.7.11 and springdoc 2.8.17 sources and docs. The orchestrator confirmed that only the US-006 Design note and `architecture.md` changed.
+- **Mid-engineer (implementation):**
+  - Implemented the approved design and kept every guardrail: no `@Transactional` (checked by reflection), per-attempt `REQUIRES_NEW`, and only `uk_short_url_short_code` retried.
+  - D64 is proven by `DatabaseErrorLoggingTest`: a real CHECK violation, a positive capture of the ERROR line, and "Failing row contains" absent. Mutation checks confirm each setting matters.
+  - D66 is in the Failsafe `argLine` only, D65 gives the driver compile scope, and the R23/R24 carry-overs are done.
+  - Surefire 510/0 (run/failed). Failsafe has 2 expected failures in QA-owned files, from D61 and D62.
+  - Deviation: a public test helper, `SecuritySliceTestConfiguration`, because the security configuration classes are package-private.
+- **ESCALATION:**
+  - The mid-engineer found, with a temporary real-PostgreSQL IT that was later deleted, that `POST` with `Accept: application/xml` **commits the row and then returns 406**. It did not fix this, because design risk K5 forbids `produces`.
+  - The architect then analysed it without editing anything. From the Spring 6.2.19 source, it confirmed that content negotiation happens after the handler commits. It also found that **K5 was wrong**: `DispatcherServlet.processHandlerException` clears `PRODUCIBLE_MEDIA_TYPES_ATTRIBUTE` before any exception resolver runs, so `produces` does not break problem+json error bodies.
+  - A malformed `Accept` header has the same commit-then-406 effect.
+  - The architect recommends class-level `produces = application/json` on `ShortUrlController`, never on the redirect. It rejects an interceptor, accepting and documenting the behaviour, ignoring `Accept`, and deduplication.
+  - Awaiting the engineer.
+- **Engineer decision on the escalation:** "approve all" (relayed). **Accepted:**
+  - **Option (a) → D70:** class-level `produces = application/json`. K5, the design-note §2 bullet and the Javadoc are corrected, and the precedence 401 > 405 > 415 > 406 > 400 is documented.
+  - **Unparseable `Accept`:** returns 406 with an empty body, recorded as a known deviation from D61.
+  - **DELETE:** returns 406 too; recorded as a US-009 design input.
+  - **Redirect:** never declares `produces`; recorded as a US-008 design input.
+  - **New AC:** the planner adds "an unacceptable `Accept` returns 406 and creates nothing", with a Cucumber scenario.
+  - **Classification:** this proceeds as part of implementation, not a fix round. The fix-round count for US-006 starts at zero with the senior review.
+  - Options (b), (c) and (d1) were **not adopted**.
+- **Process-validation finding:**
+  - An empirical real-PostgreSQL test by the mid-engineer showed that the approved design's risk K5 was wrong and caused a commit-then-error bug.
+  - The mid-engineer stopped rather than deviate from the approved design.
+  - The architect confirmed the root cause from the Spring 6.2.19 source (`processHandlerException` clears the producible attribute) before any fix was made.
+- **Implementation completed after D70:**
+  - The mid-engineer added class-level `produces`, a 406 `@ApiResponse` using the `Problem` schema, and web-slice 406 tests with `verifyNoInteractions(service)`.
+  - The architect corrected K5, §2, §4 and §5 in the design note, plus `architecture.md`.
+  - The planner added AC17.
+  - The qa-tester delivered the scripted `@Primary` generator seam through `IntegrationTestBase` (one context), 47 create Cucumber scenarios, `CreateShortUrlIT`, `ShortCodeCollisionIT`, `CreateShortUrlConcurrencyIT` and the `OpenApiDocsIT` additions. `CreateShortUrlConcurrencyIT` includes a race repeated 10 times and a lock-based proof that polls `pg_stat_activity` with Awaitility; there is no sleep.
+  - The qa-tester also re-pinned the D61 and D62 cases and completed R20 and R22. No defects.
+- **Senior review, round 1: APPROVE.**
+  - **R1 (SHOULD):** framework 5xx errors went through `handleExceptionInternal` without being logged. `HttpMessageNotWritableException` is the Q5 case of a committed row followed by a failed write.
+  - **R2 (SHOULD):** an unreachable branch in the handler.
+  - **R3–R10:** NITs.
+
+  The mid-engineer fixed R1–R4, the qa-tester fixed R5–R9, and the orchestrator fixed R10. In the process the qa-tester broke the build twice with a bulk replace and repaired both.
+- **Senior review, round 2: APPROVE.** R1 was confirmed: each 5xx is logged exactly once, and the log line never includes a query string. N1–N3 are NITs left open.
+  - The reviewer's view on Q5 is to accept and document it. After a 409, a client can use `GET /api/v1/urls/{alias}` (US-007) to check whether the alias is its own.
+- **Proposed review rules:** four, recorded in the story.
+- **Engineer decision:** "approve all" (relayed). **Accepted:**
+  - US-006 is Done.
+  - **Q5 → D71:** accepted and documented. The OpenAPI 409 description and the US-007 note are to be added, and the idempotency key goes on the US-014/US-015 roadmap.
+  - **N1–N3:** carried into US-007.
+  - **Review rules:** 1, 2 and 3 go into `CLAUDE.md` (the main session added them). Rule 4 is **Rejected**.
+  - **Commit plan:** **Modified**. US-006 is committed alone as **C4a**, and US-007 becomes **C4b**. C4a is not pre-approved.
+- **Independent verification by the main session:** it re-ran the G3 build: exit 0, Surefire 515/0, Failsafe 216/0 (run/failed), and 0 "Failing row contains" lines. It confirmed:
+  - `@Transactional` appears in `src/main` only in two Javadoc warnings;
+  - `produces` appears only on `ShortUrlController`;
+  - `allowRestrictedHeaders` appears only in the Failsafe `argLine`;
+  - there is no `Thread.sleep` in the tests.
+- **Rationale:** *(engineer to add)*
+- **Validation:**
+  - The orchestrator ran `./mvnw -q clean verify`: exit 0, Surefire 515/0 and Failsafe 216/0 (run/failed), including 59 Cucumber scenarios, merged LINE coverage 380/382.
+  - The build log has no "Failing row contains" line.
+  - The guardrails were confirmed on disk.
+- **Post-G3 change (D71):** the mid-engineer changed only the OpenAPI 409 description string on `POST /api/v1/urls`, adding the "unexpected 409, check with GET /api/v1/urls/{alias}" guidance. No test asserted the old text. The orchestrator confirmed the diff is limited to that string and rebuilt: `./mvnw -q clean verify` gave exit 0, Surefire 515/0, Failsafe 216/0 (run/failed), LINE 380/382, and 0 "Failing row contains" lines.
+
+## Entry 22 — Commit C4a (G4)
+
+- **Date:** 2026-09-29
+- **Task:** Commit C4a: US-006, the related docs (D58–D71, design inputs for US-007, US-008, US-009 and US-014), and the `CLAUDE.md` review rules (the endpoint rule plus the three US-006 rules).
 - **Engineer decision:** *(pending G4; not pre-approved)*
 - **Rationale:** *(engineer to add)*

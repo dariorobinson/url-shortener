@@ -2,13 +2,13 @@ package com.schwab.urlshortener.support;
 
 import static org.assertj.core.api.Assertions.fail;
 
+import com.schwab.urlshortener.repository.PostgresServerErrors;
 import java.util.Optional;
-import org.postgresql.util.PSQLException;
 import org.postgresql.util.ServerErrorMessage;
 
 /**
- * Test helper: unwraps a {@link Throwable} chain to the underlying pgjdbc
- * {@link PSQLException}, so constraint tests can assert the SQLSTATE and constraint name
+ * Test helper: unwraps a {@link Throwable} chain, through the production {@link PostgresServerErrors}, to
+ * the underlying pgjdbc {@code PSQLException}, so constraint tests can assert the SQLSTATE and constraint name
  * reported by PostgreSQL instead of matching on exception message text. Works for both the
  * {@code JdbcTemplate} path ({@code DataIntegrityViolationException} -&gt; {@code PSQLException})
  * and the JPA path ({@code DataIntegrityViolationException} -&gt; Hibernate
@@ -20,14 +20,7 @@ public final class PostgresErrors {
     }
 
     public static Optional<ServerErrorMessage> serverError(Throwable t) {
-        Throwable current = t;
-        while (current != null) {
-            if (current instanceof PSQLException psqlException) {
-                return Optional.ofNullable(psqlException.getServerErrorMessage());
-            }
-            current = current.getCause();
-        }
-        return Optional.empty();
+        return PostgresServerErrors.serverError(t);
     }
 
     public static String sqlState(Throwable t) {

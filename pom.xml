@@ -98,7 +98,6 @@
     <dependency>
       <groupId>org.postgresql</groupId>
       <artifactId>postgresql</artifactId>
-      <scope>runtime</scope>
     </dependency>
     <dependency>
       <groupId>org.projectlombok</groupId>
@@ -312,7 +311,9 @@
           <includes>
             <include>**/*IT.java</include>
           </includes>
-          <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar}</argLine>
+          <!-- D66: test-only. Lets the JDK HttpClient send a forged Host header (AC16). Failsafe only:
+               never in Surefire, spring-boot-maven-plugin, Compose or any runtime JVM option. -->
+          <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar} -Djdk.httpclient.allowRestrictedHeaders=host</argLine>
           <excludedEnvironmentVariables>
             <excludedEnvironmentVariable>SPRING_PROFILES_ACTIVE</excludedEnvironmentVariable>
             <excludedEnvironmentVariable>SPRING_DATASOURCE_URL</excludedEnvironmentVariable>

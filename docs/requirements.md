@@ -1,6 +1,6 @@
 # Requirements
 
-Last updated: 2026-09-29 (US-005 escalation, D57). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
+Last updated: 2026-09-29 (G3 US-006, D71). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
 
 ## Functional requirements
 
@@ -92,6 +92,20 @@ Last updated: 2026-09-29 (US-005 escalation, D57). Decisions below were made by 
 | D55 | Invalid credentials on public paths | Invalid HTTP Basic credentials get `401 AUTHENTICATION_REQUIRED` on public paths too (Spring default). |
 | D56 | Error body extensions | Every error body shares the base `ProblemDetail` keys (`type`, `title`, `status`, `detail`, `instance`, `errorCode`). Security errors (401/403) carry `errorCode` as their **only** extension. Other error types, such as validation errors (US-006), may add documented extensions on top of the base shape. |
 | D57 | Default access rule | The final filter-chain rule is **`anyRequest().denyAll()`**. Anything no explicit rule matches is refused: anonymous callers get `401 AUTHENTICATION_REQUIRED` through the entry point, and authenticated callers get `403 ACCESS_DENIED`. This closes case- and path-variant bypasses of role rules (for example `DELETE /API/v1/urls/{code}`). The ADMIN delete rule is `DELETE /api/v1/urls/**`. |
+| D58 | Short URL resource shape (create and detail) | `shortCode`, `shortUrl`, `originalUrl`, `status`, `customAlias`, `clickCount`, `createdAt` (ISO-8601 UTC), `lastAccessedAt` (always present; `null` until the first click). `createdBy`, `id`, `updatedAt` and `version` are **not** returned. Shared by US-006 and US-007. |
+| D59 | Strict request parsing | Unknown JSON fields and duplicate keys are rejected with `400 MALFORMED_REQUEST` (global Jackson setting). |
+| D60 | Empty alias | `alias: ""` or whitespace → `400 INVALID_ALIAS`, never trimmed. A missing alias or JSON `null` means absent, so a code is generated. |
+| D61 | Additional error codes (extends D31) | `RESOURCE_NOT_FOUND` (404), `METHOD_NOT_ALLOWED` (405), `NOT_ACCEPTABLE` (406), `UNSUPPORTED_MEDIA_TYPE` (415). |
+| D62 | Test base URL | The test profile's `app.base-url` is `https://short.example`. |
+| D63 | Validation precedence | When both fields are invalid, `INVALID_URL` is reported first. Both `INVALID_URL` and `INVALID_ALIAS` name their field in the `errors` extension. |
+| D64 | No row data in logs | The PostgreSQL driver sets `logServerErrorDetail=false`, and Hibernate's `SqlExceptionHelper` error logging is off, so a CHECK violation's "Failing row contains …" (full URL, username) never reaches the logs. A test proves it, with a positive log-capture assertion. |
+| D65 | PostgreSQL driver scope | The PostgreSQL JDBC driver is a **compile**-scope dependency, so the production `PostgresServerErrors` can read `ServerErrorMessage` (the SQLSTATE and constraint name) rather than parsing message text. |
+| D66 | Test-only Host forging | `-Djdk.httpclient.allowRestrictedHeaders=host` is set in the **Failsafe** `argLine` only, and never in runtime JVM options. |
+| D67 | US-007 resource shape | US-007 AC1 lists `shortUrl` and the full D58 field set. |
+| D68 | Request body size | The body-size limit is deferred to US-014 (load balancer or filter). |
+| D69 | Other 400 mappings | Method-validation and query-parameter type errors fall back to `400 MALFORMED_REQUEST`. US-011, which has the first query parameters, decides whether they become `VALIDATION_FAILED`. |
+| D70 | Content negotiation on the management API | `ShortUrlController` declares class-level `produces = application/json` (never `application/problem+json`). An unacceptable `Accept` is rejected with 406 at mapping lookup, **before** the body is read or the service runs, so nothing is created. Precedence is 401 > 405 > 415 > 406 > 400. An **unparseable** `Accept` header gets a 406 with an **empty body**, a known deviation from D61's "406 carries a problem+json body". DELETE with an unacceptable `Accept` also gets 406, inherited from the class. The redirect controller (US-008) **never** declares `produces`. |
+| D71 | Lost 201 before a retry | Accepted and documented. If a create commits but the client never sees the 201 (the response write fails or the client disconnects), a same-alias retry gets `409 ALIAS_ALREADY_EXISTS`. After an unexpected 409, the client can call `GET /api/v1/urls/{alias}`, which returns 200 only if the alias is its own (D4), confirming the earlier create succeeded. This is stated in the OpenAPI 409 description and in US-007. A generated-code retry creates a second link (D5). A real idempotency key is on the production roadmap (US-014/US-015). |
 
 ## Environment and platform decisions
 

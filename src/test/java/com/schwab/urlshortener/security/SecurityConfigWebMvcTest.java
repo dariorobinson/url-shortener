@@ -66,7 +66,7 @@ class SecurityConfigWebMvcTest {
     @RestController
     static class SecurityProbeController {
 
-        static final AtomicInteger DELETE_CALLS = new AtomicInteger();
+        static final AtomicInteger HANDLER_CALLS = new AtomicInteger();
 
         @GetMapping("/api/test-probe")
         Map<String, Object> probeGet(Authentication authentication) {
@@ -81,38 +81,38 @@ class SecurityConfigWebMvcTest {
         @DeleteMapping("/api/v1/urls/{code}")
         @ResponseStatus(HttpStatus.NO_CONTENT)
         void delete(@PathVariable String code) {
-            DELETE_CALLS.incrementAndGet();
+            HANDLER_CALLS.incrementAndGet();
         }
 
         @DeleteMapping("/api/v1/urls/{code}/")
         @ResponseStatus(HttpStatus.NO_CONTENT)
         void deleteTrailingSlash(@PathVariable String code) {
-            DELETE_CALLS.incrementAndGet();
+            HANDLER_CALLS.incrementAndGet();
         }
 
         @DeleteMapping("/api/v1/urls/{code}/x")
         @ResponseStatus(HttpStatus.NO_CONTENT)
         void deleteNested(@PathVariable String code) {
-            DELETE_CALLS.incrementAndGet();
+            HANDLER_CALLS.incrementAndGet();
         }
 
         /** Test-only upper-case probe: an unmatched path must never reach it (D57). */
         @DeleteMapping("/API/v1/urls/{code}")
         @ResponseStatus(HttpStatus.NO_CONTENT)
         void deleteUpperCase(@PathVariable String code) {
-            DELETE_CALLS.incrementAndGet();
+            HANDLER_CALLS.incrementAndGet();
         }
 
         @PostMapping("/{code}")
         @ResponseStatus(HttpStatus.NO_CONTENT)
         void postSingleSegment(@PathVariable String code) {
-            DELETE_CALLS.incrementAndGet();
+            HANDLER_CALLS.incrementAndGet();
         }
 
         @GetMapping("/{a}/{b}")
         @ResponseStatus(HttpStatus.NO_CONTENT)
         void getTwoSegments(@PathVariable String a, @PathVariable String b) {
-            DELETE_CALLS.incrementAndGet();
+            HANDLER_CALLS.incrementAndGet();
         }
 
         private static Map<String, Object> probe(Authentication authentication) {
@@ -132,7 +132,7 @@ class SecurityConfigWebMvcTest {
 
     @BeforeEach
     void resetCounter() {
-        SecurityProbeController.DELETE_CALLS.set(0);
+        SecurityProbeController.HANDLER_CALLS.set(0);
     }
 
     private void assertAuthenticationRequired(MockHttpServletRequestBuilder request) throws Exception {
@@ -229,20 +229,20 @@ class SecurityConfigWebMvcTest {
                 .andExpect(jsonPath("$.status").value(403))
                 .andExpect(jsonPath("$.type").value("about:blank"))
                 .andExpect(jsonPath("$.instance").value("/api/v1/urls/abc1234"));
-        assertThat(SecurityProbeController.DELETE_CALLS).hasValue(0);
+        assertThat(SecurityProbeController.HANDLER_CALLS).hasValue(0);
     }
 
     @Test
     void shouldLetAdminReachDeleteHandler() throws Exception {
         mockMvc.perform(delete("/api/v1/urls/abc1234").with(httpBasic(ADMIN, ADMIN_PASSWORD)))
                 .andExpect(status().isNoContent());
-        assertThat(SecurityProbeController.DELETE_CALLS).hasValue(1);
+        assertThat(SecurityProbeController.HANDLER_CALLS).hasValue(1);
     }
 
     @Test
     void shouldReturn401NotHandlerForAnonymousDelete() throws Exception {
         assertAuthenticationRequired(delete("/api/v1/urls/abc1234"));
-        assertThat(SecurityProbeController.DELETE_CALLS).hasValue(0);
+        assertThat(SecurityProbeController.HANDLER_CALLS).hasValue(0);
     }
 
     @ParameterizedTest
@@ -251,14 +251,14 @@ class SecurityConfigWebMvcTest {
         mockMvc.perform(delete(path).with(httpBasic(ALICE, ALICE_PASSWORD)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value("ACCESS_DENIED"));
-        assertThat(SecurityProbeController.DELETE_CALLS).hasValue(0);
+        assertThat(SecurityProbeController.HANDLER_CALLS).hasValue(0);
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"/api/v1/urls/abc1234", "/api/v1/urls/abc1234/", "/api/v1/urls/abc1234/x"})
     void shouldLetAdminReachHandlerOnEveryMappedVariant(String path) throws Exception {
         mockMvc.perform(delete(path).with(httpBasic(ADMIN, ADMIN_PASSWORD))).andExpect(status().isNoContent());
-        assertThat(SecurityProbeController.DELETE_CALLS).hasValue(1);
+        assertThat(SecurityProbeController.HANDLER_CALLS).hasValue(1);
     }
 
     @ParameterizedTest
@@ -274,7 +274,7 @@ class SecurityConfigWebMvcTest {
         } catch (RequestRejectedException rejected) {
             assertThat(rejected).isNotNull();
         }
-        assertThat(SecurityProbeController.DELETE_CALLS).hasValue(0);
+        assertThat(SecurityProbeController.HANDLER_CALLS).hasValue(0);
     }
 
     // D57: no explicit rule matches the upper-case path, so the final denyAll rule refuses it for every role.
@@ -283,7 +283,7 @@ class SecurityConfigWebMvcTest {
         mockMvc.perform(delete("/API/v1/urls/abc1234").with(httpBasic(ALICE, ALICE_PASSWORD)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value("ACCESS_DENIED"));
-        assertThat(SecurityProbeController.DELETE_CALLS).hasValue(0);
+        assertThat(SecurityProbeController.HANDLER_CALLS).hasValue(0);
     }
 
     // D57: even ADMIN is refused, because only explicitly listed paths can reach a handler.
@@ -292,7 +292,7 @@ class SecurityConfigWebMvcTest {
         mockMvc.perform(delete("/API/v1/urls/abc1234").with(httpBasic(ADMIN, ADMIN_PASSWORD)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errorCode").value("ACCESS_DENIED"));
-        assertThat(SecurityProbeController.DELETE_CALLS).hasValue(0);
+        assertThat(SecurityProbeController.HANDLER_CALLS).hasValue(0);
     }
 
     // D57: an anonymous caller is routed to the entry point (401 with the Basic challenge), not 403.
@@ -303,7 +303,7 @@ class SecurityConfigWebMvcTest {
                 .andExpect(result -> assertThat(result.getResponse().getHeader(HttpHeaders.WWW_AUTHENTICATE))
                         .isEqualTo(CHALLENGE))
                 .andExpect(jsonPath("$.errorCode").value("AUTHENTICATION_REQUIRED"));
-        assertThat(SecurityProbeController.DELETE_CALLS).hasValue(0);
+        assertThat(SecurityProbeController.HANDLER_CALLS).hasValue(0);
     }
 
     // D57: authenticated callers are refused on unmatched requests, and the mapped handlers are not reached.
@@ -319,7 +319,7 @@ class SecurityConfigWebMvcTest {
             mockMvc.perform(get("/a/b").with(httpBasic(who[0], who[1])))
                     .andExpect(status().isForbidden()).andExpect(jsonPath("$.errorCode").value("ACCESS_DENIED"));
         }
-        assertThat(SecurityProbeController.DELETE_CALLS).hasValue(0);
+        assertThat(SecurityProbeController.HANDLER_CALLS).hasValue(0);
     }
 
     // ---- AC5, D32

@@ -89,6 +89,10 @@ Base package: `com.schwab.urlshortener`. `JAVA_HOME` must point to JDK 25.
 - Behaviour implemented by a wrapper (e.g. credential erasure in `ProviderManager`) is tested through that wrapper, not the inner component.
 - Security tests never catch a broad `Exception`; they catch the specific expected type or none.
 - Every role-restricting URL rule has tests for its trailing-slash, nested-path, and case variants against a probe route mapped at that variant; the rule's pattern covers the variants (`/**`) or a method-wide deny rule follows it.
+- Every new endpoint in a story names the `SecurityConfig` filter-chain rule that admits it. With `denyAll` as the default (D57), an unlisted path is refused even to ADMIN.
+- Every 5xx produced by the exception advice is logged at ERROR exactly once with the exception — including framework exceptions routed through `handleExceptionInternal`, not only the `Exception` catch-all.
+- Tests truncate shared tables only in per-test/per-scenario setup, never rely on rows created by another class, and assume serial execution. Enabling parallel test execution requires revisiting truncation and the short-code generator seam together.
+- HTTP tests that forge a restricted header (e.g. `Host`) include a positive control proving the header reached the server.
 
 ## Post-task report (required at every story completion)
 

@@ -4,11 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.schwab.urlshortener.config.ShortCodeProperties;
 import com.schwab.urlshortener.support.IntegrationTestBase;
+import com.schwab.urlshortener.support.ScriptedShortCodeGenerator;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
@@ -21,8 +23,14 @@ class ShortCodeGeneratorWiringIT extends IntegrationTestBase {
 
     private static final String CODE_PATTERN = "^[A-Za-z0-9]{7}$";
 
+    /** The production bean, selected by name so the {@code @Primary} test seam is not injected. */
     @Autowired
+    @Qualifier("shortCodeGenerator")
     private ShortCodeGenerator generator;
+
+    /** Whatever the context resolves for the interface: the scripted test seam. */
+    @Autowired
+    private ShortCodeGenerator primaryGenerator;
 
     @Autowired
     private ShortCodeProperties properties;
@@ -43,6 +51,11 @@ class ShortCodeGeneratorWiringIT extends IntegrationTestBase {
         assertThat(properties.maxAttempts()).isEqualTo(5);
         assertThat(generator).isInstanceOf(SecureRandomShortCodeGenerator.class);
         assertThat(generator.generate()).matches(CODE_PATTERN);
+    }
+
+    @Test
+    void shouldResolveTheScriptedSeamAsTheUnqualifiedGeneratorAndWrapTheProductionOne() {
+        assertThat(primaryGenerator).isInstanceOf(ScriptedShortCodeGenerator.class).isNotSameAs(generator);
     }
 
     @Test

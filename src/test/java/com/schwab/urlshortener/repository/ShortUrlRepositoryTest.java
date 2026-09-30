@@ -204,6 +204,44 @@ class ShortUrlRepositoryTest {
                 });
     }
 
+    // D65: ties the production constant and helper to the V1 schema (SQLSTATE and constraint name).
+    @Test
+    void shouldRecogniseADuplicateCodeAsTheShortCodeConflictThroughTheProductionHelper() {
+        repository.saveAndFlush(newActive("abc1234", T0));
+
+        assertThatThrownBy(() -> repository.saveAndFlush(newActive("abc1234", T0)))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .satisfies(thrown -> {
+                    assertThat(PostgresErrors.sqlState(thrown)).isEqualTo("23505");
+                    assertThat(PostgresErrors.constraintName(thrown))
+                            .isEqualTo(ShortUrlRepository.SHORT_CODE_UNIQUE_CONSTRAINT);
+                    assertThat(PostgresServerErrors.isUniqueViolation(
+                            thrown, ShortUrlRepository.SHORT_CODE_UNIQUE_CONSTRAINT)).isTrue();
+                });
+    }
+
+    // D64, D65: a CHECK violation is never mistaken for the code conflict, and its message carries no row data.
+    @Test
+    void shouldNotTreatACheckViolationAsAConflictAndKeepRowDataOutOfTheExceptionMessages() {
+        String marker = "secret-row-marker";
+        String tooLong = "https://example.com/" + marker + "a".repeat(2049);
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "INSERT INTO short_url (short_code, original_url, created_by) VALUES (?, ?, ?)",
+                "chk1234", tooLong, "alice"))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .satisfies(thrown -> {
+                    assertThat(PostgresErrors.sqlState(thrown)).isEqualTo("23514");
+                    assertThat(PostgresErrors.constraintName(thrown)).isEqualTo("ck_short_url_original_url_length");
+                    assertThat(PostgresServerErrors.isUniqueViolation(
+                            thrown, ShortUrlRepository.SHORT_CODE_UNIQUE_CONSTRAINT)).isFalse();
+                    for (Throwable t = thrown; t != null; t = t.getCause()) {
+                        assertThat(String.valueOf(t.getMessage())).doesNotContain(marker)
+                                .doesNotContain("Failing row contains");
+                    }
+                });
+    }
+
     // D51: actor columns round-trip at exactly the shared limit, ASCII and multibyte.
     @ParameterizedTest
     @ValueSource(strings = {"a", "\u00e9"})

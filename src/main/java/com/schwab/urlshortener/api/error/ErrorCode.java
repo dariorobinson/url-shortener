@@ -3,7 +3,7 @@ package com.schwab.urlshortener.api.error;
 import org.springframework.http.HttpStatus;
 
 /**
- * The complete catalogue of {@code errorCode} values returned by the API (D31). Each constant carries
+ * The complete catalogue of {@code errorCode} values returned by the API (D31, extended by D61). Each constant carries
  * the HTTP status fixed for it elsewhere, so a producer never keeps a second mapping. Later stories
  * reuse these values verbatim.
  */
@@ -20,7 +20,12 @@ public enum ErrorCode {
     SHORT_CODE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE),
     AUTHENTICATION_REQUIRED(HttpStatus.UNAUTHORIZED),
     ACCESS_DENIED(HttpStatus.FORBIDDEN),
-    INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR);
+    INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR),
+    // D61: framework errors that no D31 code could carry
+    RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND),
+    METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED),
+    NOT_ACCEPTABLE(HttpStatus.NOT_ACCEPTABLE),
+    UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE);
 
     private final HttpStatus status;
 

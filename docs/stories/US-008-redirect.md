@@ -42,6 +42,10 @@ As any visitor, I want to follow a short link, so that I am redirected to the or
 ## Open questions
 - None. D18/D32 fix `HEAD /{code}`'s status (302, same as GET) and public access; whether it is counted is proved by US-010, not this story.
 
+## Design inputs carried from US-006 (engineer-approved at the US-006 escalation)
+- The redirect controller must **never** declare `produces` (D70). It must answer any `Accept` (browsers, `<img>`, `text/html`). Only the management API (`ShortUrlController`) declares `produces = application/json`.
+- The redirect must not share a base class or meta-annotation that carries `produces`.
+
 ## Design note
 *(architect)*
 

@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.UUID;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
@@ -22,6 +23,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * US-005 security behaviour through a real Tomcat: what MockMvc cannot show (error rendering through the
@@ -41,6 +43,9 @@ class SecurityIT extends IntegrationTestBase {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private JdbcTemplate jdbc;
+
     private final HttpClient client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
     private final List<HttpResponse<String>> allResponses = new ArrayList<>();
 
@@ -55,6 +60,18 @@ class SecurityIT extends IntegrationTestBase {
         allResponses.add(response);
         // AC7: no session or cookie on any response, whatever its status.
         assertThat(response.headers().firstValue("Set-Cookie")).as("Set-Cookie on %s %s", method, path).isEmpty();
+        return response;
+    }
+
+    private HttpResponse<String> send(String method, String path, String user, String password, String jsonBody)
+            throws Exception {
+        String token = Base64.getEncoder().encodeToString((user + ":" + password).getBytes(StandardCharsets.UTF_8));
+        HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Basic " + token)
+                .method(method, HttpRequest.BodyPublishers.ofString(jsonBody)).build();
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        allResponses.add(response);
         return response;
     }
 
@@ -221,13 +238,20 @@ class SecurityIT extends IntegrationTestBase {
     @ParameterizedTest
     @ValueSource(strings = {"GET", "HEAD"})
     void shouldNotBlockShortCodePathsForAnonymousGetAndHead(String method) throws Exception {
-        // Recorded behaviour today (no redirect controller until US-008): 404.
+        // Recorded behaviour today (no redirect controller until US-008): 404. Since D61 the body is the
+        // RESOURCE_NOT_FOUND problem, not a security error (GET only: HEAD has no body).
         for (String path : List.of("/abc1234", "/ab", "/a_b", "/v3")) {
             HttpResponse<String> response = anonymous(method, path);
 
             assertThat(response.statusCode()).as("%s %s", method, path).isEqualTo(404);
             assertThat(response.headers().firstValue("WWW-Authenticate")).isEmpty();
-            assertThat(response.body()).doesNotContain("errorCode");
+            assertThat(response.body()).doesNotContain("AUTHENTICATION_REQUIRED").doesNotContain("ACCESS_DENIED");
+            if ("GET".equals(method)) {
+                assertThat(json(response).get("errorCode").asText()).as("GET %s", path)
+                        .isEqualTo("RESOURCE_NOT_FOUND");
+            } else {
+                assertThat(response.body()).as("HEAD %s has no body", path).isEmpty();
+            }
         }
     }
 
@@ -315,12 +339,15 @@ class SecurityIT extends IntegrationTestBase {
     void shouldNotLetUserReachDeleteHandlerThroughPathVariants(String path, int expectedStatus) throws Exception {
         HttpResponse<String> response = send("DELETE", path, TestUsers.ALICE, TestUsers.ALICE_PASSWORD);
 
-        // Exact status as the build behaves today (no delete handler until US-009). 403 means the
-        // USER rule matched; 400 means the firewall rejected the path; 404 means it is not routed
-        // (Spring MVC 6 does not match trailing slashes; the trailing-slash form is now stopped by the
-        // ADMIN rule, D3, so USER gets 403).
+        // Exact status as the build behaves today (no delete handler until US-009).
+        // 403: the ADMIN rule (D3) or the final denyAll (D57) refused the USER; 400: the firewall rejected the path.
         // When US-009 adds the handler, revisit each row deliberately.
         assertThat(response.statusCode()).as("DELETE %s", path).isEqualTo(expectedStatus);
+        if (expectedStatus == 403) {
+            // R22: a 403 here is the security ACCESS_DENIED problem, not some other 403.
+            assertThat(contentType(response)).startsWith("application/problem+json");
+            assertThat(json(response).get("errorCode").asText()).as("DELETE %s", path).isEqualTo("ACCESS_DENIED");
+        }
     }
 
     @ParameterizedTest
@@ -331,6 +358,31 @@ class SecurityIT extends IntegrationTestBase {
 
         assertThat(anonymous.statusCode()).as("anonymous GET %s", path).isEqualTo(400);
         assertThat(user.statusCode()).as("user GET %s", path).isEqualTo(400);
+    }
+
+    @Test
+    void shouldReturn403AccessDeniedForPostToUpperCaseApiPathAndCreateNothing() throws Exception {
+        String url = "https://example.com/upper-case/" + UUID.randomUUID();
+        String body = "{\"originalUrl\":\"" + url + "\"}";
+
+        HttpResponse<String> response = send("POST", "/API/v1/urls", TestUsers.ALICE, TestUsers.ALICE_PASSWORD, body);
+
+        assertThat(response.statusCode()).isEqualTo(403);
+        assertThat(contentType(response)).startsWith("application/problem+json");
+        assertThat(json(response).get("errorCode").asText()).isEqualTo("ACCESS_DENIED");
+        assertThat(new ShortUrlTestData(jdbc).countByOriginalUrl(url)).isZero();
+    }
+
+    @Test
+    void shouldReturn404ForPostToTrailingSlashApiPathAndCreateNothing() throws Exception {
+        String url = "https://example.com/trailing-slash/" + UUID.randomUUID();
+        String body = "{\"originalUrl\":\"" + url + "\"}";
+
+        HttpResponse<String> response = send("POST", "/api/v1/urls/", TestUsers.ALICE, TestUsers.ALICE_PASSWORD, body);
+
+        assertThat(response.statusCode()).isEqualTo(404);
+        assertThat(json(response).get("errorCode").asText()).isEqualTo("RESOURCE_NOT_FOUND");
+        assertThat(new ShortUrlTestData(jdbc).countByOriginalUrl(url)).isZero();
     }
 
     // ---- AC7 ----

@@ -11,5 +11,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
  */
 public interface ShortUrlRepository extends JpaRepository<ShortUrl, Long> {
 
+    /** The only constraint whose violation means "code already taken" (V1 schema). */
+    String SHORT_CODE_UNIQUE_CONSTRAINT = "uk_short_url_short_code";
+
     Optional<ShortUrl> findByShortCode(String shortCode);
 }

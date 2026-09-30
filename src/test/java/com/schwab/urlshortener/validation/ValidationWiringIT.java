@@ -9,7 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 /**
  * Black-box check that the beans wired from real configuration in the full context enforce
- * D11/D28/D29: own host comes from the test profile's app.base-url (localhost), and the default
+ * D11/D28/D29: own host comes from the test profile's app.base-url (short.example, D62), and the default
  * D29 reserved list is active. Deliberately small; the input tables live in the unit tests.
  */
 class ValidationWiringIT extends IntegrationTestBase {
@@ -22,15 +22,17 @@ class ValidationWiringIT extends IntegrationTestBase {
 
     @Test
     void shouldRejectOwnHostFromConfiguredBaseUrlIgnoringCaseTrailingDotPortAndScheme() {
-        assertThat(urlValidator.isValid("http://localhost:8080/x")).isFalse();
-        assertThat(urlValidator.isValid("HTTPS://LOCALHOST./x")).isFalse();
-        assertThat(urlValidator.isValid("http://localhost/x")).isFalse();
+        assertThat(urlValidator.isValid("https://short.example/x")).isFalse();
+        assertThat(urlValidator.isValid("http://short.example:8080/x")).isFalse();
+        assertThat(urlValidator.isValid("HTTPS://SHORT.EXAMPLE./x")).isFalse();
+        assertThat(urlValidator.isValid("http://short.example/x")).isFalse();
     }
 
     @Test
     void shouldAcceptHostsThatOnlyResembleTheConfiguredOwnHost() {
-        assertThat(urlValidator.isValid("https://localhost.evil.com/x")).isTrue();
-        assertThat(urlValidator.isValid("https://sub.localhost/x")).isTrue();
+        assertThat(urlValidator.isValid("https://short.example.evil.com/x")).isTrue();
+        assertThat(urlValidator.isValid("https://sub.short.example/x")).isTrue();
+        assertThat(urlValidator.isValid("http://localhost:8080/x")).as("localhost is no longer the own host").isTrue();
         assertThat(urlValidator.isValid("https://other.example/x")).isTrue();
     }
 

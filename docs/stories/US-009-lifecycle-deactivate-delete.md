@@ -59,6 +59,10 @@ As the owner of a short URL, I want to deactivate or reactivate it, and as an AD
 - In the two-concurrent-deactivations test (AC11), the losing request may receive `409 CONCURRENT_MODIFICATION` (true optimistic-lock conflict) or `409 SHORT_URL_ALREADY_DEACTIVATED` (if the requests serialise and the second sees the committed state). D35 requires one `200` and one `409` but does not say which `errorCode`. Proposed: the test asserts status `409` and accepts either `errorCode` — engineer to confirm.
 - Note on something intentionally *not* flagged as open: whether a `USER` calling `DELETE` on their *own* link should get `403` or `404` is already decided — `docs/architecture.md`'s REST table lists `403` as a `DELETE` error and D3 states only `ADMIN` may delete, with no ownership exception. AC6 reflects this; it is not ambiguous.
 
+## Design inputs carried from US-006 (engineer-approved at the US-006 escalation)
+- PATCH and DELETE live on `ShortUrlController` and inherit its class-level `produces = application/json` (D70). An unacceptable `Accept` returns 406 **before** any state change. DELETE returns 406 too, even though it has no body.
+- PATCH returns a body, so it needs a real-HTTP IT that asserts 406 **and** no state change (the version is unchanged), with a positive control.
+
 ## Design note
 *(architect)*
 

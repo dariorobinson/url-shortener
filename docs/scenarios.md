@@ -21,7 +21,7 @@ See [requirements.md](requirements.md). The ambiguous requirements were resolved
 | 3 | Short-code generator | Done (US-003) |
 | 4 | URL and alias validation | Done (US-004) |
 | 5 | Security foundation (`USER` / `ADMIN`, 401/403) | Done (US-005) |
-| 6 | Create/read API and error handling | Planned |
+| 6 | Create/read API and error handling | Create implemented and reviewed (US-006, awaiting G3); read is US-007 |
 | 7 | Redirect | Planned |
 | 8 | Deactivate/reactivate and soft delete | Planned |
 | 9 | Analytics | Planned |
@@ -88,6 +88,18 @@ See [architecture.md](architecture.md).
     - R15: `DELETE /api/v1/urls/**` requires ADMIN.
     - Escalation: a case-variant probe (`DELETE /API/...`) showed a USER could reach a handler. The engineer chose `anyRequest().denyAll()` (D57) and authorised a third round.
   - **Final build:** 482 tests, 0 failures.
+- **US-006 (Task 6, create):**
+  - **Design:** architect design note, approved at G2 (D58–D69).
+  - **Implementation:** the mid-engineer delivered:
+    - `POST /api/v1/urls`, with per-attempt REQUIRES_NEW transactions and a bounded retry, retrying only on `uk_short_url_short_code`. Reserved-word codes use up an attempt, a taken alias gives 409, and running out gives 503 with no row.
+    - `PostgresServerErrors` and `GlobalExceptionHandler` using the D56 `errors` extension.
+    - Strict JSON parsing and the D61 error codes.
+    - D64: row data kept out of the logs, with a test.
+    - OpenAPI with the Basic scheme and the punycode note.
+  - **Escalation:** the mid-engineer found empirically that the approved design's risk K5 was wrong: a request with `Accept: application/xml` committed the row and then returned 406. The architect confirmed the cause from the Spring source, and the engineer approved class-level `produces` (D70).
+  - **QA:** the qa-tester added a scripted-generator seam, 47 create scenarios, and `CreateShortUrlIT`, `ShortCodeCollisionIT` and `CreateShortUrlConcurrencyIT`. The concurrency test includes a lock-based, sleep-free proof. No defects.
+  - **Review:** APPROVE in both rounds. The SHOULD findings were fixed: framework 5xx errors weren't logged, and one branch could never run.
+  - **Validation:** the orchestrator ran `./mvnw -q clean verify` (731 tests, 0 failures, LINE coverage 99.5%).
 
 ---
 

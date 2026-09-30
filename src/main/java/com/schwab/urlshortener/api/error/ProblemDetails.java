@@ -1,6 +1,7 @@
 package com.schwab.urlshortener.api.error;
 
 import java.net.URI;
+import java.util.List;
 import java.util.Objects;
 import org.springframework.http.ProblemDetail;
 
@@ -13,6 +14,9 @@ import org.springframework.http.ProblemDetail;
 public final class ProblemDetails {
 
     public static final String ERROR_CODE = "errorCode";
+
+    /** Field-level violations, present only on VALIDATION_FAILED, INVALID_URL and INVALID_ALIAS (D56, D63). */
+    public static final String ERRORS = "errors";
 
     private ProblemDetails() {
     }
@@ -33,6 +37,20 @@ public final class ProblemDetails {
         // are illegal in a URI out of getRequestURI(); otherwise URI.create throws. instance is a D56 base key.
         problem.setInstance(URI.create(requestUri));
         problem.setProperty(ERROR_CODE, code.name());
+        return problem;
+    }
+
+    /**
+     * Same as {@link #of(ErrorCode, String, String)}, plus the {@code errors} extension (D56).
+     *
+     * @param errors the violations, already sorted; copied defensively; never carry the rejected value
+     * @throws NullPointerException if any argument is null
+     * @throws IllegalArgumentException if requestUri is not a valid URI reference
+     */
+    public static ProblemDetail of(ErrorCode code, String detail, String requestUri, List<FieldViolation> errors) {
+        Objects.requireNonNull(errors, "errors");
+        ProblemDetail problem = of(code, detail, requestUri);
+        problem.setProperty(ERRORS, List.copyOf(errors));
         return problem;
     }
 }

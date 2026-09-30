@@ -4,7 +4,7 @@ title: Production hardening
 status: Open
 plan_task: 13
 depends_on: [US-001, US-005, US-006]
-requirements: [FR-11, D37]
+requirements: [FR-11, D37, D68]
 requires_design_approval: true
 ---
 
@@ -51,6 +51,10 @@ As an engineer, I want request tracing, security headers, a hardened container i
 - **CORS (if ever added):** configure it through `http.cors(...)` so preflight is handled before authorization, or preflight requests will get 401.
 - **Env-var names in deployment docs:** document the canonical forms. Both forms bind; see the correction in the US-004 story.
 
+## Carry-over from US-006 (engineer-approved at US-006 G2 and G3)
+- **Request-body size limit (D68):** enforce a maximum request-body size, either at the load balancer or with a servlet filter. Today large bodies are parsed before they are rejected. The limit's value and the rejection response are decided in this story's design.
+
+- **Roadmap (D71):** add a real idempotency key for `POST /api/v1/urls`, for example an `Idempotency-Key` header with a stored key-to-result mapping, so that a create whose 201 was lost can be retried safely. Either implement it here or record it in US-015's production roadmap.
 ## Design note
 *(architect)*
 
