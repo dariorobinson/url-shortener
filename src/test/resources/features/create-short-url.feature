@@ -79,6 +79,32 @@ Feature: Create a short URL
     Then the service answers with status 400
     And the problem has error code "INVALID_URL"
 
+  # D84
+  Scenario Outline: An original URL at exactly 2048 encoded bytes is accepted
+    Given "alice" is signed in
+    When the caller creates a short URL of <bytes> encoded bytes made of <kind> characters
+    Then the service answers with status 201
+    And exactly one short URL exists for the submitted original URL
+
+    Examples:
+      | kind  | bytes |
+      | CJK   | 2048  |
+      | emoji | 2048  |
+
+  # D84
+  Scenario Outline: An original URL over 2048 encoded bytes is refused even within 2048 characters
+    Given "alice" is signed in
+    When the caller creates a short URL of <bytes> encoded bytes made of <kind> characters
+    Then the service answers with status 400
+    And the problem has error code "INVALID_URL"
+    And the problem names the field "originalUrl"
+    And no short URL exists for the submitted original URL
+
+    Examples:
+      | kind  | bytes |
+      | CJK   | 2049  |
+      | emoji | 2049  |
+
   # AC6
   Scenario: A generated code that collides is retried in a fresh transaction
     Given "alice" is signed in

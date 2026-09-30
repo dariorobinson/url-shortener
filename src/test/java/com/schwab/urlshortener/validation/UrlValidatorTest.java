@@ -3,9 +3,12 @@ package com.schwab.urlshortener.validation;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -113,25 +116,58 @@ class UrlValidatorTest {
         assertThat(validator.isValid(urlOfLength(UrlValidator.MAX_LENGTH - 1, "a") + " ")).isFalse();
     }
 
-    @Test
-    void shouldCountCharactersNotBytesForMultibyteUrlAtLimit() {
-        // U+00E9 is 1 char / 2 UTF-8 bytes; the URL is 2048 characters but far over 2048 bytes.
-        String twoByte = urlOfLength(UrlValidator.MAX_LENGTH, "é");
-        assertThat(twoByte.codePointCount(0, twoByte.length())).isEqualTo(2048);
-        assertThat(twoByte.getBytes(java.nio.charset.StandardCharsets.UTF_8).length).isGreaterThan(2048);
-        assertThat(validator.isValid(twoByte)).isTrue();
-        assertThat(validator.isValid(twoByte + "é")).isFalse();
+    // D84: the D75-encoded form is limited to 2048 bytes, in addition to D11's 2048 characters.
+    private static final String PREFIX = "https://other.example/";
+
+    /** A URL of the prefix, as many whole units as fit, and ASCII padding so the encoded form is exact. */
+    private static String urlEncodedTo(int encodedBytes, String unit, int unitEncodedBytes) {
+        int room = encodedBytes - PREFIX.length();
+        return PREFIX + unit.repeat(room / unitEncodedBytes) + "a".repeat(room % unitEncodedBytes);
+    }
+
+    private static Stream<Arguments> encodedLimitCases() {
+        return Stream.of(
+                Arguments.of("ASCII", "a", 1, 2048, true),
+                Arguments.of("ASCII", "a", 1, 2049, false),
+                Arguments.of("CJK (3 UTF-8 bytes, 9 encoded)", "中", 9, 2048, true),
+                Arguments.of("CJK (3 UTF-8 bytes, 9 encoded)", "中", 9, 2049, false),
+                Arguments.of("emoji (4 UTF-8 bytes, 12 encoded)", "\uD83D\uDE00", 12, 2048, true),
+                Arguments.of("emoji (4 UTF-8 bytes, 12 encoded)", "\uD83D\uDE00", 12, 2049, false),
+                Arguments.of("e-acute (2 UTF-8 bytes, 6 encoded)", "é", 6, 2048, true),
+                Arguments.of("e-acute (2 UTF-8 bytes, 6 encoded)", "é", 6, 2049, false));
+    }
+
+    @ParameterizedTest(name = "{0} at {3} encoded bytes -> {4}")
+    @MethodSource("encodedLimitCases")
+    void shouldAcceptAtExactlyMaxEncodedBytesAndRejectOneOver(String label, String unit, int unitEncodedBytes,
+            int encodedBytes, boolean expected) {
+        String url = urlEncodedTo(encodedBytes, unit, unitEncodedBytes);
+
+        assertThat(LocationEncoder.encode(url)).hasSize(encodedBytes);
+        assertThat(url.codePointCount(0, url.length())).isLessThanOrEqualTo(UrlValidator.MAX_LENGTH + 1);
+        assertThat(UrlValidator.MAX_ENCODED_BYTES).isEqualTo(2048);
+        assertThat(validator.isValid(url)).isEqualTo(expected);
     }
 
     @Test
-    void shouldCountSupplementaryCodePointsAsOneCharacter() {
-        // U+1F600 is 2 UTF-16 chars but 1 code point, as PostgreSQL char_length counts it.
+    void shouldRejectUrlOfMaxCharactersWhenItsEncodedFormExceedsMaxBytes() {
+        // D11 alone would accept these (2048 code points); D84 rejects them (encoded form far over 2048 bytes).
+        for (String filler : new String[] {"é", "中", "\uD83D\uDE00"}) {
+            String url = urlOfLength(UrlValidator.MAX_LENGTH, filler);
+            assertThat(url.codePointCount(0, url.length())).isEqualTo(UrlValidator.MAX_LENGTH);
+            assertThat(LocationEncoder.encode(url).length()).isGreaterThan(UrlValidator.MAX_ENCODED_BYTES);
+            assertThat(validator.isValid(url)).isFalse();
+        }
+    }
+
+    @Test
+    void shouldCountCodePointsNotUtf16UnitsOrBytesForShortMultibyteUrls() {
+        // 100 emoji: 200 UTF-16 units, 400 UTF-8 bytes, 1200 encoded bytes, 122 code points. Well inside both limits.
         String emoji = new String(Character.toChars(0x1F600));
-        String atLimit = urlOfLength(UrlValidator.MAX_LENGTH, emoji);
-        assertThat(atLimit.codePointCount(0, atLimit.length())).isEqualTo(2048);
-        assertThat(atLimit.length()).isGreaterThan(2048);
-        assertThat(validator.isValid(atLimit)).isTrue();
-        assertThat(validator.isValid(atLimit + emoji)).isFalse();
+        String url = PREFIX + emoji.repeat(100);
+        assertThat(url.length()).isEqualTo(PREFIX.length() + 200);
+        assertThat(url.codePointCount(0, url.length())).isEqualTo(PREFIX.length() + 100);
+        assertThat(validator.isValid(url)).isTrue();
     }
 
     // AC4, D11

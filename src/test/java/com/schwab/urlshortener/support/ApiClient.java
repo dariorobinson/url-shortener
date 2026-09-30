@@ -10,7 +10,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
-import java.util.Locale;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
@@ -87,9 +86,7 @@ public final class ApiClient {
             builder.header("Content-Type", contentType);
         }
         if (user != null) {
-            String token = Base64.getEncoder()
-                    .encodeToString((user + ":" + passwordOf(user)).getBytes(StandardCharsets.UTF_8));
-            builder.header("Authorization", "Basic " + token);
+            builder.header("Authorization", basicHeader(user, user));
         }
         for (int i = 0; i < headers.length; i += 2) {
             builder.header(headers[i], headers[i + 1]);
@@ -97,12 +94,26 @@ public final class ApiClient {
         return builder;
     }
 
+    /**
+     * The Basic Authorization header for {@code login} (as typed, for example a different letter case) with
+     * the password of the account {@code user}, which must be a known test user.
+     */
+    public static String basicHeader(String login, String user) {
+        return rawBasicHeader(login, passwordOf(user));
+    }
+
+    /** The Basic Authorization header for exactly this login and password, whatever they are. */
+    public static String rawBasicHeader(String login, String password) {
+        String token = Base64.getEncoder().encodeToString((login + ":" + password).getBytes(StandardCharsets.UTF_8));
+        return "Basic " + token;
+    }
+
     static String passwordOf(String user) {
-        return switch (user.toLowerCase(Locale.ROOT)) {
+        return switch (TestUsers.require(user)) {
             case TestUsers.ALICE -> TestUsers.ALICE_PASSWORD;
             case TestUsers.BOB -> TestUsers.BOB_PASSWORD;
             case TestUsers.ADMIN -> TestUsers.ADMIN_PASSWORD;
-            default -> throw new IllegalArgumentException("unknown test user");
+            default -> throw new IllegalStateException("TestUsers.require admitted a user with no password");
         };
     }
 

@@ -9,12 +9,11 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -46,13 +45,19 @@ class SecurityIT extends IntegrationTestBase {
 
     private final HttpClient client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
     private final List<HttpResponse<String>> allResponses = new ArrayList<>();
+    private ShortUrlTestData data;
+
+    @BeforeEach
+    void truncate() {
+        data = new ShortUrlTestData(jdbc);
+        data.truncate();
+    }
 
     private HttpResponse<String> send(String method, String path, String user, String password) throws Exception {
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
                 .method(method, HttpRequest.BodyPublishers.noBody());
         if (user != null) {
-            String token = Base64.getEncoder().encodeToString((user + ":" + password).getBytes(StandardCharsets.UTF_8));
-            builder.header("Authorization", "Basic " + token);
+            builder.header("Authorization", ApiClient.rawBasicHeader(user, password));
         }
         HttpResponse<String> response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
         allResponses.add(response);
@@ -63,10 +68,9 @@ class SecurityIT extends IntegrationTestBase {
 
     private HttpResponse<String> send(String method, String path, String user, String password, String jsonBody)
             throws Exception {
-        String token = Base64.getEncoder().encodeToString((user + ":" + password).getBytes(StandardCharsets.UTF_8));
         HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
                 .header("Content-Type", "application/json")
-                .header("Authorization", "Basic " + token)
+                .header("Authorization", ApiClient.rawBasicHeader(user, password))
                 .method(method, HttpRequest.BodyPublishers.ofString(jsonBody)).build();
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
         allResponses.add(response);
@@ -230,8 +234,10 @@ class SecurityIT extends IntegrationTestBase {
     @ParameterizedTest
     @ValueSource(strings = {"GET", "HEAD"})
     void shouldNotBlockShortCodePathsForAnonymousGetAndHead(String method) throws Exception {
-        // Recorded behaviour today (no redirect controller until US-008): 404. Since D61 the body is the
-        // RESOURCE_NOT_FOUND problem, not a security error (GET only: HEAD has no body).
+        // Public redirect (US-008): a code with no row, and malformed codes, are all the redirect's own 404
+        // (SHORT_URL_NOT_FOUND, D72), not a security error. HEAD has no body, so only GET shows the errorCode.
+        // Same-path control (after the 404s, so no mid-test truncation): once "abc1234" exists, the same
+        // request redirects, so the 404 above was about the missing row.
         for (String path : List.of("/abc1234", "/ab", "/a_b", "/v3")) {
             HttpResponse<String> response = anonymous(method, path);
 
@@ -240,11 +246,15 @@ class SecurityIT extends IntegrationTestBase {
             assertThat(response.body()).doesNotContain("AUTHENTICATION_REQUIRED").doesNotContain("ACCESS_DENIED");
             if ("GET".equals(method)) {
                 assertThat(json(response).get("errorCode").asText()).as("GET %s", path)
-                        .isEqualTo("RESOURCE_NOT_FOUND");
+                        .isEqualTo("SHORT_URL_NOT_FOUND");
             } else {
                 assertThat(response.body()).as("HEAD %s has no body", path).isEmpty();
             }
         }
+
+        data.seed("abc1234", "ACTIVE", "https://example.com/control");
+        HttpResponse<String> control = anonymous(method, "/abc1234");
+        assertThat(control.statusCode()).as("%s /abc1234 control", method).isEqualTo(302);
     }
 
     @Test
@@ -362,7 +372,7 @@ class SecurityIT extends IntegrationTestBase {
         assertThat(response.statusCode()).isEqualTo(403);
         assertThat(contentType(response)).startsWith("application/problem+json");
         assertThat(json(response).get("errorCode").asText()).isEqualTo("ACCESS_DENIED");
-        assertThat(new ShortUrlTestData(jdbc).countByOriginalUrl(url)).isZero();
+        assertThat(data.countByOriginalUrl(url)).isZero();
     }
 
     @Test
@@ -374,7 +384,7 @@ class SecurityIT extends IntegrationTestBase {
 
         assertThat(response.statusCode()).isEqualTo(404);
         assertThat(json(response).get("errorCode").asText()).isEqualTo("RESOURCE_NOT_FOUND");
-        assertThat(new ShortUrlTestData(jdbc).countByOriginalUrl(url)).isZero();
+        assertThat(data.countByOriginalUrl(url)).isZero();
     }
 
     // ---- AC7 ----
@@ -386,8 +396,11 @@ class SecurityIT extends IntegrationTestBase {
         send("DELETE", "/api/v1/urls/abc1234", TestUsers.ALICE, TestUsers.ALICE_PASSWORD);
         anonymous("GET", "/actuator/health");
         anonymous("GET", "/abc1234");
+        data.seed("Cookie01", "ACTIVE", "https://example.com/cookie");
+        HttpResponse<String> redirect = anonymous("GET", "/Cookie01");
 
-        assertThat(allResponses).hasSize(5);
+        assertThat(redirect.statusCode()).isEqualTo(302);
+        assertThat(allResponses).hasSize(6);
         assertThat(allResponses).allSatisfy(response ->
                 assertThat(response.headers().map()).doesNotContainKey("set-cookie"));
     }

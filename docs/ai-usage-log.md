@@ -739,5 +739,98 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
 
 - **Date:** 2026-09-29
 - **Task:** Commit C4b: US-007, its docs (D72–D74, the US-008 design inputs and carry-over), and the `CLAUDE.md` review rules (three US-007 rules).
+- **Engineer decision:** "approve all" (relayed). **Accepted:** commit C4b exactly as staged. **Committed as `a94d41c`** (parent `a34d010`, 29 files). The main session verifies and pushes (engineer-approved).
+- **Independent verification by the main session, before approval:** it re-verified the staging (29 files, no unstaged or untracked files, no forbidden files) and rebuilt: exit 0, Surefire 605/0, Failsafe 310/0 (run/failed).
+- **Validation:** the working tree was clean after the commit.
+- **Rationale:** *(engineer to add)*
+
+## Entry 25 — US-008 redirect (design)
+
+- **Date:** 2026-09-29
+- **Task:** Architect design note for US-008. The story requires design approval, so it stops at G2.
+- **Inputs:**
+  - D7: 302 plus `Cache-Control: no-store`, including how it interacts with Spring Security's default cache headers (US-005 risk K9).
+  - D2: 404 for unknown, deactivated and deleted links.
+  - D72: malformed codes, checked via `ShortCodeFormat`.
+  - D70: the redirect never declares `produces`.
+  - D18 and D32: HEAD returns 302 and is not counted. The seam must let US-010 add click counting without changing the redirect contract.
+  - `SecurityConfig` rule 7.
+  - Raw-path logging.
+  - The R11–R13 carry-over.
+  - `Location` is exactly the stored `original_url`.
+- **AI recommendation (architect):**
+  - **Controller:** a new `RedirectController` with `@GetMapping("/{code}")`, no `produces` and no base class. It is admitted by rule 7 (D32).
+  - **Resolution:** `RedirectService.resolve` runs the `ShortCodeFormat` check before the read-only transaction, then one lookup. Only ACTIVE links redirect; everything else gets an identical 404 `SHORT_URL_NOT_FOUND`.
+  - **The 302:** `Location` is set as a raw string, never through `setLocation(URI)`. The body is empty. `Cache-Control` is exactly `no-store`; the app sets it, so Spring Security's cache writer adds nothing (no `Pragma` or `Expires`).
+  - **404 negotiation:** a browser `Accept` falls back to problem+json, so the status is always 404, never 406.
+  - **Routing precedence:** verified from source, for AC5.
+  - **Click seam:** no `ClickRecorder` yet. The seam lets US-010 add an `HttpMethod` parameter and record GET only, after the read transaction.
+  - **Logging:** DEBUG only, with the code and a reason.
+  - **OpenAPI:** documented with no security requirement.
+- **Engineer decisions requested:**
+  - **C1:** non-ASCII in `Location`. The architect reports from the Tomcat 10.1.55 source that characters above U+00FF make Tomcat drop the header and log the full URL at WARN. The recommendation is to percent-encode non-ASCII as UTF-8.
+  - **C2:** `Cache-Control` must be exactly `no-store`.
+  - **C3:** check the format in the service, not with a route regex.
+  - **C8:** bare `/api` when authenticated gets 404.
+  - **Q1–Q7:** open questions, including that the query string is not passed through, the trailing-slash 401 prompt, the JSON 404 for browsers, `GET /error` returning 500, and planner wording edits to AC1, AC5 and AC6.
+- **Engineer decision:** "approve all" (relayed). **Accepted:**
+  - C1, C2, C3, C8, Q2–Q7 and the rest of the design, recorded as **D75–D83**.
+  - **Q2 → D79:** query strings are not forwarded.
+  - **Q4 → D81:** the HTML 404 page goes on the US-015 roadmap.
+- **Engineer guardrails:**
+  - No `produces` on `RedirectController`, proven by a reflection test.
+  - `Location` is set as a raw string only.
+  - The format check comes before the transaction and the lookup, and uses `ShortCodeFormat`, not `AliasPolicy`.
+  - No `@Transactional`.
+  - Every 404 test asserts `errorCode`, and HEAD 404 tests include a same-path 302 control.
+  - The `Cache-Control` assertion is an exact `no-store` match.
+  - The target URL and its host are never logged.
+- **C1 condition:** QA must pin the **actual** Tomcat behaviour for a stored URL above U+00FF, both before and after encoding. If it differs from the architect's source reading, escalate.
+- **Next commit:** C5 is not pre-approved.
+- **C4b push:** the main session verified `a94d41c` (parent `a34d010`, 29 files, no forbidden files, trailer present) and **pushed it. `origin/main` is now `a94d41c`**.
+- **Rationale:** *(engineer to add)*
+- **Validation:** the architect cited the Spring Framework 6.2, Spring Security 6.5, Tomcat 10.1 (Boot 3.5.16 manages 10.1.55), Boot 3.5.16 and springdoc 2.8.17 source. It flagged two points as not verified. The C1 Tomcat behaviour comes from reading the source, not from a run; QA will pin the actual behaviour. The orchestrator confirmed that only the US-008 Design note and `architecture.md` changed.
+- **Fix round 1 (US-008):**
+  - The qa-tester fixed R2–R4, R9, R11 and R13, and measured R1 through the real app: the redirect returns a bare 500 at about 890 CJK characters, well under the D11 limit, while a 2048-character ASCII URL gets a 302. The measurement code was a throwaway and was deleted.
+  - The mid-engineer fixed R5, R6, R10, R12 and R14.
+  - The orchestrator fixed R7, R8 and R15.
+  - Rebuild: exit 0, Surefire 693/0, Failsafe 441/0 (run/failed).
+- **Engineer decision on the escalation:** "approve all" (relayed). This is the orchestrator's recommendation; alternatives 1 (raise the Tomcat header limit) and 2 (accept the gap) were **not adopted**.
+  - **R1 → D84:** create also rejects an `originalUrl` whose D75-encoded form exceeds 2048 bytes, with 400 `INVALID_URL`. The shared encoder is used by both `UrlValidator` and the redirect. Tomcat's default header size is unchanged.
+  - **Change to a Done story's test:** `UrlValidatorTest.shouldCountCharactersNotBytesForMultibyteUrlAtLimit` in US-004 is updated to D84. This is recorded in the US-004 story.
+  - **Fix round 2 (the last):** authorised, limited to R1.
+- **Process-validation finding:**
+  - The engineer required C1, the actual Tomcat behaviour, to be pinned empirically.
+  - That check confirmed the architect's reading of the source.
+  - It also exposed a second, user-triggerable 500 (R1) that no design review had found: the encoded header exceeding Tomcat's buffer.
+- **Fix round 2 (R1, D84):**
+  - The mid-engineer moved the encoder to `validation/LocationEncoder` (shared by the redirect and `UrlValidator`) and added `UrlValidator.MAX_ENCODED_BYTES = 2048`.
+  - The mid-engineer updated, renamed or removed Done-story tests in US-004. They are listed one by one in the US-004 story.
+  - The orchestrator directed a change to the `URL_RULE` detail text to state the byte limit, treating it as part of R1 because it describes the same rule. It is disclosed here.
+  - The qa-tester added `CreateShortUrlEncodedLimitIT`, `EncodedUrls`, Cucumber outlines, and `RedirectIT` tests at the maximum (302 with a byte-exact 2048-byte `Location`, no Tomcat error). It also added a raw-SQL positive control that pins the only remaining gap: a row that bypasses D84 still gets the 500.
+- **Senior review, final: APPROVE.** R1–R15 are resolved and every guardrail holds.
+  - **N1 (SHOULD):** a test name overclaims.
+  - **N2 (SHOULD):** the control doesn't assert that the URL is absent from the log. The orchestrator verified that by hand.
+  - **N3 (SHOULD):** traceability gaps, fixed by the orchestrator.
+  - **N4–N7:** NITs.
+  - **On a DB CHECK for D84**, the reviewer recommends app-level enforcement for now, with the gap recorded as a decision like D83. If a database guarantee is wanted, the option is a safety bound `CHECK (octet_length(original_url) <= 2048)` in US-010's V2. It never rejects a valid row, and it caps `Location` at 6144 bytes.
+  - Eight more proposed review rules.
+- **Engineer decision:** "approve all" (relayed). **Accepted:**
+  - US-008 is Done.
+  - The `URL_RULE` text update is accepted as part of R1.
+  - D84 stays application-only, recorded as **D85** (the raw-SQL gap, like D83).
+  - N1, N2 and N4–N7 are carried into US-009. The N1 change to a Done-story test (US-004) is approved and will be listed test by test.
+  - **Review rules:** 1, 3, 5, 6, 7 and 8 are added to `CLAUDE.md` (the main session did this, for C5a). Rules 2 and 4 are **Rejected**.
+  - **Commit plan:** US-008 is committed alone as **C5a**, and US-009 becomes **C5b**. C5a is not pre-approved.
+- **Main-session suggestion not adopted:** the main session suggested the `octet_length(original_url) <= 2048` safety CHECK in US-010's V2, for consistency with "DB constraints are the final guarantee" (as in D47). The engineer chose application-only enforcement. Rationale: *(engineer to add)*.
+- **Independent verification by the main session:** it re-ran the G3 build (exit 0, Surefire 702/0, Failsafe 454/0, exactly one expected `HeadersTooLargeException` from the raw-SQL control) and confirmed that `LocationEncoder` is shared by `UrlValidator` and `RedirectController`.
+
+## Entry 26 — Commit C5a (G4)
+
+- **Date:** 2026-09-30
+- **Task:** Commit C5a: US-008, its docs (D75–D85, the US-004 post-completion note, carry-overs for US-009, US-014 and US-015), and the `CLAUDE.md` review rules (six US-008 rules).
 - **Engineer decision:** *(pending G4; not pre-approved)*
 - **Rationale:** *(engineer to add)*
+- **Rationale:** *(engineer to add)*
+- **Validation:** the orchestrator ran `./mvnw -q clean verify`: exit 0, Surefire 702/0 and Failsafe 454/0 (run/failed), including 130 Cucumber scenarios, merged LINE coverage 449/451. There is 1 intentional `HeadersTooLargeException` in the log, with no URL text.
+- **Session interruption:** the previous orchestrator run ended with an API billing error ("Credit balance is too low") after C5a was staged and before the G4 checkpoint was shown. The engineer resolved it and resumed the orchestrator with "A". That meant resume only; it was not approval of C5a. The main session had checked the state: 37 files staged, nothing unstaged, no forbidden files, and a rebuild of the staged state gave exit 0, Surefire 702/0, Failsafe 454/0. HEAD was still `a94d41c`. The orchestrator re-checked (HEAD `a94d41c`, 37 staged, nothing unstaged) and presented G4 without redoing any work.

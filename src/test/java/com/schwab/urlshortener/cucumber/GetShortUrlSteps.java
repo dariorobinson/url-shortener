@@ -13,11 +13,11 @@ import io.cucumber.java.en.When;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.ArrayList;
-import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -167,7 +167,8 @@ public class GetShortUrlSteps {
         assertThat(ApiClient.contentType(response)).startsWith("application/json");
         assertThat(ApiClient.keys(body())).isEqualTo(RESOURCE_KEYS);
         assertThat(Instant.parse(body().path("createdAt").asText())).isNotNull();
-        assertThat(body().path("shortUrl").asText()).isEqualTo("https://short.example/" + body().path("shortCode").asText());
+        assertThat(body().path("shortUrl").asText())
+                .isEqualTo("https://short.example/" + body().path("shortCode").asText());
     }
 
     @Then("the details response has status {string} and points at {string}")
@@ -217,7 +218,8 @@ public class GetShortUrlSteps {
 
     @Then("the details response has a Basic challenge")
     public void hasABasicChallenge() {
-        assertThat(response.headers().firstValue("WWW-Authenticate")).hasValueSatisfying(v -> assertThat(v).startsWith("Basic"));
+        assertThat(response.headers().firstValue("WWW-Authenticate"))
+                .hasValueSatisfying(v -> assertThat(v).startsWith("Basic"));
     }
 
     @Then("the details response must not be cached")

@@ -4,7 +4,7 @@ title: Production hardening
 status: Open
 plan_task: 13
 depends_on: [US-001, US-005, US-006]
-requirements: [FR-11, D37, D68]
+requirements: [FR-11, D37, D68, D80, D82]
 requires_design_approval: true
 ---
 
@@ -55,6 +55,13 @@ As an engineer, I want request tracing, security headers, a hardened container i
 - **Request-body size limit (D68):** enforce a maximum request-body size, either at the load balancer or with a servlet filter. Today large bodies are parsed before they are rejected. The limit's value and the rejection response are decided in this story's design.
 
 - **Roadmap (D71):** add a real idempotency key for `POST /api/v1/urls`, for example an `Idempotency-Key` header with a stored key-to-result mapping, so that a create whose 201 was lost can be retried safely. Either implement it here or record it in US-015's production roadmap.
+
+## Carry-over from US-008
+- **D80:** `/{code}/` with a trailing slash gets 401 with a Basic challenge, and browsers show a login prompt. Revisit this.
+- **D82:** a direct `GET /error` returns 500, which can inflate 5xx monitoring. Handle it.
+
+- **Actuator links page (US-008 review):** an authenticated `GET /actuator` (the discovery links page) returns 200 to any USER. Either set `management.endpoints.web.discovery.enabled: false`, or require `hasRole(ADMIN)` on the exact `/actuator` path. With discovery off, an authenticated `/actuator` reaches `/{code}` and gets 404 (the D83 gap).
+- **HEAD on health (US-008 QA):** anonymous `HEAD /actuator/health` returns 401, because rule 2 permits GET only. Decide whether to permit HEAD, or keep requiring probes to use GET (already noted above).
 ## Design note
 *(architect)*
 

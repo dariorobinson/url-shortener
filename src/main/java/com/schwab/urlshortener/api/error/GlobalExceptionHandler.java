@@ -42,7 +42,9 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     static final String URL_RULE = "must be an absolute http or https URL with an ASCII host (use punycode for "
             + "internationalised domains), at most " + UrlValidator.MAX_LENGTH
-            + " characters, without user info, and not on this service's host";
+            + " characters and at most " + UrlValidator.MAX_ENCODED_BYTES
+            + " bytes once non-ASCII characters are percent-encoded as UTF-8, without user info, and not on "
+            + "this service's host";
 
     static final String ALIAS_RULE = "must be " + SecureRandomShortCodeGenerator.MIN_LENGTH + " to "
             + SecureRandomShortCodeGenerator.MAX_LENGTH + " characters from A-Z, a-z and 0-9, and not a reserved word";

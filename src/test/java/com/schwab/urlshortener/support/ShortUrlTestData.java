@@ -60,6 +60,20 @@ public final class ShortUrlTestData {
         }
     }
 
+    /**
+     * Moves an existing row to a non-DELETED status (for example DEACTIVATED, which no lifecycle API reaches
+     * yet). Use {@link #markDeleted} for DELETED, which must also set the D44 columns.
+     */
+    public void setStatus(String code, String status) {
+        if ("DELETED".equals(status)) {
+            throw new IllegalArgumentException("use markDeleted for DELETED (D44 columns)");
+        }
+        int updated = jdbc.update("UPDATE short_url SET status = ? WHERE short_code = ?", status, code);
+        if (updated != 1) {
+            throw new IllegalStateException("expected exactly one row to change status");
+        }
+    }
+
     /** Moves an existing row to DELETED, satisfying D44. */
     public void markDeleted(String code) {
         int updated = jdbc.update("UPDATE short_url SET status = 'DELETED', deleted_at = now(), deleted_by = ?"

@@ -96,6 +96,12 @@ Base package: `com.schwab.urlshortener`. `JAVA_HOME` must point to JDK 25.
 - Test code does not use inline fully qualified class names (e.g. `org.mockito.ArgumentMatchers.eq`, `java.util.ArrayList`); use imports or static imports.
 - A HEAD test expecting a 404 has no body to assert `errorCode` on, so it includes a 200 on the same path in the same test as proof the mapping was reached.
 - Test-support lookups that turn a Gherkin or test-data word into a user, owner, or other database value throw on unknown values (no default branch), with one lookup per concept and a single case rule.
+- Header budget: any value written into a response header from stored or user data has a proven maximum encoded size below `server.max-http-response-header-size`, shown by a test at the D11 length limit with the worst-case encoding.
+- A stored value echoed into a response header needs a create-time byte limit on its exact wire form, tested at the boundary through the real servlet container — a mocked slice is not enough.
+- A table of recorded statuses that includes 404 rows also asserts each 404's `errorCode` (via GET for HEAD rows). Multi-status assertions (`isIn(...)`) are allowed only while recording and are replaced by the observed value before review.
+- A test whose name claims to distinguish two behaviours (e.g. code points vs UTF-16 units) includes an input on which they differ; if a later rule makes the difference unobservable, rename or remove the test and record it.
+- Any change to a Done story's tests is listed test by test (updated, renamed, removed, added) in that story's post-completion section.
+- Every review-finding ID raised in a round has a row in the story's Review log with its resolution, including those the orchestrator fixes.
 
 ## Post-task report (required at every story completion)
 

@@ -56,8 +56,6 @@ class ShortUrlController {
 
     static final String BASE_PATH = "/api/v1/urls";
 
-    private static final String PROBLEM_JSON = "application/problem+json";
-
     private final ShortUrlService service;
     private final ShortUrlLinks links;
 
@@ -79,23 +77,29 @@ class ShortUrlController {
                     schema = @Schema(implementation = ShortUrlResponse.class)))
     @ApiResponse(responseCode = "400",
             description = "VALIDATION_FAILED, MALFORMED_REQUEST, INVALID_URL or INVALID_ALIAS",
-            content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ErrorResponseSchema.class)))
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
     @ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED",
-            content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ErrorResponseSchema.class)))
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
     @ApiResponse(responseCode = "406",
             description = "NOT_ACCEPTABLE. The only response type is application/json; an unacceptable Accept is "
                     + "rejected before anything is created. An unparseable Accept also gets 406, with no body.",
-            content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ErrorResponseSchema.class)))
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
     @ApiResponse(responseCode = "409",
             description = "ALIAS_ALREADY_EXISTS. If this 409 is unexpected because an earlier create's 201 was "
                     + "lost (the response failed to arrive or the client disconnected after the commit), call "
                     + "GET /api/v1/urls/{alias}. It returns 200 only if the alias belongs to the caller, which "
                     + "confirms the earlier create succeeded.",
-            content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ErrorResponseSchema.class)))
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
     @ApiResponse(responseCode = "415", description = "UNSUPPORTED_MEDIA_TYPE",
-            content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ErrorResponseSchema.class)))
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
     @ApiResponse(responseCode = "503", description = "SHORT_CODE_UNAVAILABLE",
-            content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ErrorResponseSchema.class)))
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
     ResponseEntity<ShortUrlResponse> create(@Valid @RequestBody CreateShortUrlRequest request,
             @Parameter(hidden = true) Authentication authentication) {
         // authentication.getName() is the configured lowercase username, whatever case the client typed (D54).
@@ -120,15 +124,18 @@ class ShortUrlController {
             content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
                     schema = @Schema(implementation = ShortUrlResponse.class)))
     @ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED",
-            content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ErrorResponseSchema.class)))
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
     @ApiResponse(responseCode = "404",
             description = "SHORT_URL_NOT_FOUND. The code is unknown, malformed, deleted, or not the caller's; the "
                     + "responses are indistinguishable.",
-            content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ErrorResponseSchema.class)))
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
     @ApiResponse(responseCode = "406",
             description = "NOT_ACCEPTABLE. The only response type is application/json. An unparseable Accept also "
                     + "gets 406, with no body.",
-            content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ErrorResponseSchema.class)))
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
     ShortUrlResponse get(@PathVariable("code") String code, @Parameter(hidden = true) Authentication authentication) {
         return ShortUrlResponse.from(service.get(code, callerOf(authentication)), links);
     }

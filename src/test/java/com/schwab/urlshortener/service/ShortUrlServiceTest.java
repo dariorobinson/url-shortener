@@ -186,6 +186,15 @@ class ShortUrlServiceTest {
     }
 
     @Test
+    void shouldRejectAUrlWhoseEncodedFormExceeds2048BytesEvenWithin2048Characters() {
+        String url = "https://other.example/" + "\u00e9".repeat(500); // 522 characters, 3022 encoded bytes (D84)
+
+        assertThatThrownBy(() -> service.create(generated(url))).isInstanceOf(InvalidUrlException.class);
+
+        verifyNoInteractions(repository, generator, transactionManager);
+    }
+
+    @Test
     void shouldNotPutTheRejectedAliasInTheInvalidAliasExceptionMessage() {
         assertThatThrownBy(() -> service.create(new CreateShortUrlCommand(URL, "bad-alias-marker!", "alice")))
                 .isInstanceOf(InvalidAliasException.class)

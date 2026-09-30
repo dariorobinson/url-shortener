@@ -27,6 +27,7 @@ class OpenApiDocsIT extends IntegrationTestBase {
 
     private static final String CREATE_PATH = "/api/v1/urls";
     private static final String GET_PATH = "/api/v1/urls/{code}";
+    private static final String REDIRECT_PATH = "/{code}";
 
     @Autowired
     private TestRestTemplate restTemplate;
@@ -40,6 +41,7 @@ class OpenApiDocsIT extends IntegrationTestBase {
     private JsonNode docs;
     private JsonNode post;
     private JsonNode getOne;
+    private JsonNode redirect;
 
     @BeforeEach
     void loadDocs() throws Exception {
@@ -47,6 +49,7 @@ class OpenApiDocsIT extends IntegrationTestBase {
         docs = objectMapper.readTree(response.getBody());
         post = docs.path("paths").path(CREATE_PATH).path("post");
         getOne = docs.path("paths").path(GET_PATH).path("get");
+        redirect = docs.path("paths").path(REDIRECT_PATH).path("get");
     }
 
     /** Follows a local {@code #/components/schemas/X} reference; returns the node itself otherwise. */
@@ -199,5 +202,52 @@ class OpenApiDocsIT extends IntegrationTestBase {
 
         assertThat(description).contains("ALIAS_ALREADY_EXISTS");
         assertThat(description).contains("SHORT_URL_NOT_FOUND");
+    }
+
+    // ---- US-008: GET /{code} ----
+
+    @Test
+    void shouldDocumentTheRedirectPathWithExactlyTheGetOperation() {
+        assertThat(redirect.isMissingNode()).as("GET %s documented", REDIRECT_PATH).isFalse();
+        assertThat(names(docs.path("paths").path(REDIRECT_PATH))).containsExactly("get");
+    }
+
+    @Test
+    void shouldDocumentExactlyOneRequiredCodePathParameterWithoutAPattern() {
+        JsonNode parameters = redirect.path("parameters");
+
+        assertThat(parameters.size()).isEqualTo(1);
+        assertThat(parameters.get(0).path("name").asText()).isEqualTo("code");
+        assertThat(parameters.get(0).path("in").asText()).isEqualTo("path");
+        assertThat(parameters.get(0).path("required").asBoolean()).isTrue();
+        assertThat(parameters.get(0).path("schema").has("pattern")).isFalse();
+    }
+
+    @Test
+    void shouldDocumentExactlyThe302And404ResponsesWithNoImplicit200() {
+        assertThat(names(redirect.path("responses"))).containsExactly("302", "404");
+    }
+
+    @Test
+    void shouldDocument302WithLocationAndCacheControlHeadersAndNoContent() {
+        JsonNode found = redirect.path("responses").path("302");
+
+        assertThat(names(found.path("headers"))).containsExactlyInAnyOrder("Location", "Cache-Control");
+        assertThat(found.has("content")).isFalse();
+    }
+
+    @Test
+    void shouldDocument404AsProblemJsonOnlyWithTheProblemSchema() {
+        JsonNode notFound = redirect.path("responses").path("404");
+
+        assertThat(names(notFound.path("content"))).containsExactly("application/problem+json");
+        assertThat(notFound.path("content").path("application/problem+json").path("schema").path("$ref").asText())
+                .endsWith("/Problem");
+    }
+
+    @Test
+    void shouldRequireNoSecurityOnTheRedirectOperation() {
+        assertThat(redirect.has("security")).isFalse();
+        assertThat(docs.has("security")).isFalse();
     }
 }

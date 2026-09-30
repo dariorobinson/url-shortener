@@ -266,7 +266,9 @@ class CreateShortUrlIT extends IntegrationTestBase {
     @ParameterizedTest
     @CsvSource({"alice,alice", "ALICE,alice", "Bob,bob", "admin,admin"})
     void shouldRecordConfiguredUsernameAsCreatorAndNeverReturnIt(String login, String owner) throws Exception {
-        HttpResponse<String> response = create(login, marker("ac10"), null);
+        // Usernames match case-insensitively (AC10): the login is sent as typed, the password is the account's.
+        HttpResponse<String> response = create(null, marker("ac10"), null,
+                "Authorization", ApiClient.basicHeader(login, owner));
 
         assertThat(response.statusCode()).isEqualTo(201);
         assertThat(data.createdBy(api.json(response).path("shortCode").asText())).isEqualTo(owner);

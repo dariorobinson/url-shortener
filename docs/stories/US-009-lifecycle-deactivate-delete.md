@@ -63,6 +63,14 @@ As the owner of a short URL, I want to deactivate or reactivate it, and as an AD
 - PATCH and DELETE live on `ShortUrlController` and inherit its class-level `produces = application/json` (D70). An unacceptable `Accept` returns 406 **before** any state change. DELETE returns 406 too, even though it has no body.
 - PATCH returns a body, so it needs a real-HTTP IT that asserts 406 **and** no state change (the version is unchanged), with a positive control.
 
+## Carry-over from US-008 (engineer-approved at US-008 G3)
+- **N1 (SHOULD, mid-engineer; the engineer approved changing a Done-story test):** `UrlValidatorTest.shouldCountCodePointsNotUtf16UnitsOrBytesForShortMultibyteUrls` passes under every counting method, because D84 makes the difference unobservable. Rename it to what it proves, for example `shouldAcceptAShortUrlOfSupplementaryCharacters`, or delete it as a duplicate of `shouldAcceptValidSupplementaryCharacterInPath`. Add a comment in `UrlValidator.isValid` saying that D84 implies the D11 count, and that the D11 check stays as the cheap limit before encoding. List the change test by test in US-004's post-completion section.
+- **N2 (SHOULD, qa-tester):** the raw-SQL positive control in `RedirectIT` (around lines 242–252) must also assert that the oversized URL is absent from the captured output. Its comment should say it pins the D85 gap.
+- **N4 (NIT, mid-engineer):** wrap the 171-column Javadoc line in `RedirectController` (around line 30).
+- **N5 (NIT, mid-engineer):** add `verify(service).resolve(CODE)` to the body-less unparseable-`Accept` and HEAD 404 slice tests in `RedirectControllerWebMvcTest`.
+- **N6 (NIT, mid-engineer):** `LocationEncoderTest.shouldLeaveA2048CharacterAsciiUrlByteIdentical` builds 2024 characters. Make it exactly 2048 with `hasSize(2048)`, and use `String.format(Locale.ROOT, …)`.
+- **N7 (NIT, mid-engineer):** add `@throws NullPointerException if target is null` to `LocationEncoder.encode`.
+
 ## Design note
 *(architect)*
 

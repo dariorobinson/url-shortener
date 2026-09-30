@@ -38,6 +38,12 @@ This story is docs-only: it has no Cucumber scenarios or `*IT` tests, since no c
 ## Open questions
 - Unlike US-012/US-013, the engineer's decisions (D15–D38) do not state who authors and reviews this docs-only story. The Owner column above proposes `mid-engineer` (author) / `senior-engineer` (reviewer) by analogy with the general workflow, but this is a planner proposal, not a decision — needs engineer confirmation.
 
+## Production roadmap inputs (engineer-approved)
+- **D81:** an HTML 404 page for browsers hitting the public redirect.
+- **D71:** an idempotency key for create (also in US-014's carry-over).
+- **Abuse:** screening of target URLs at create, abuse takedown, and rate limits (US-008 design, open-redirect considerations).
+- **D22:** upgrade to Spring Boot 4.x.
+
 ## Design note
 *(architect)*
 

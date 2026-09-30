@@ -22,7 +22,7 @@ See [requirements.md](requirements.md). The ambiguous requirements were resolved
 | 4 | URL and alias validation | Done (US-004) |
 | 5 | Security foundation (`USER` / `ADMIN`, 401/403) | Done (US-005) |
 | 6 | Create/read API and error handling | Done (US-006 create, US-007 read) |
-| 7 | Redirect | Planned |
+| 7 | Redirect | Done (US-008) |
 | 8 | Deactivate/reactivate and soft delete | Planned |
 | 9 | Analytics | Planned |
 
@@ -106,6 +106,15 @@ See [architecture.md](architecture.md).
   - **QA:** `GetShortUrlIT` (ownership matrix, byte-identical 404 proof, case sensitivity, round trip, D71 check-after-409, pins for `Cache-Control` and HEAD) and 36 Cucumber scenarios. No defects.
   - **Review:** APPROVE in both rounds. The SHOULD findings were fixed: stale docs and unresolved Gherkin owners. R4 conflicts with a recorded decision, so it went to the engineer.
   - **Validation:** the orchestrator ran `./mvnw -q clean verify` (915 tests, 0 failures, LINE coverage 99.5%).
+- **US-008 (Task 7, redirect):**
+  - **Design:** approved at G2 (D75–D83).
+  - **Implementation:** `RedirectController`/`RedirectService`.
+    - `GET`/`HEAD /{code}` returns 302 with the raw, D75-encoded `Location` and exactly `Cache-Control: no-store`.
+    - It returns an identical 404 for unknown, deactivated, deleted and malformed codes.
+    - It never declares `produces` and never forwards the query string.
+  - **Empirical check:** QA pinned Tomcat's real behaviour (C1 condition). It confirmed the architect's source reading and exposed R1: a long non-ASCII target made the redirect return a bare 500. The engineer approved D84, which limits the encoded form to 2048 bytes at create.
+  - **Review:** round 1 was CHANGES_REQUIRED (R1, plus three test-guardrail gaps), followed by two fix rounds. The final review was APPROVE.
+  - **Validation:** the orchestrator ran `./mvnw -q clean verify` (1156 tests, 0 failures, LINE coverage 99.56%).
 
 ---
 

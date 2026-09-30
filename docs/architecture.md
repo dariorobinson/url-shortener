@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-09-29 (US-006 implemented; content negotiation per D70; US-007 implemented). Each section is marked *planned*, *designed (US-nnn)*, or *implemented (US-nnn)* as work progresses.
+Last updated: 2026-09-29 (US-006 implemented; content negotiation per D70; US-007 implemented; US-008 implemented). Each section is marked *planned*, *designed (US-nnn)*, or *implemented (US-nnn)* as work progresses.
 
 ## Overview
 
@@ -143,12 +143,14 @@ com.schwab.urlshortener
 ├── security/          # implemented (US-005): SecurityConfig (filter chain, RoleHierarchy),
 │                      #   UserAccountsConfig/Properties, UserAccounts, Role,
 │                      #   ProblemDetailAuthenticationEntryPoint/AccessDeniedHandler/ResponseWriter
-├── api/               # ShortUrlController, ShortUrlLinks (shortUrl/Location from APP_BASE_URL) (US-006)
+├── api/               # ShortUrlController, ShortUrlLinks (shortUrl/Location from APP_BASE_URL) (US-006);
+│                      #   RedirectController (GET/HEAD /{code}, never `produces`) (implemented (US-008))
 │   ├── dto/           # CreateShortUrlRequest, ShortUrlResponse (shared with US-007) (US-006)
 │   └── error/         # ErrorCode, ProblemDetails (implemented (US-005));
 │                      #   GlobalExceptionHandler, FieldViolation, ErrorResponseSchema (docs only) (US-006)
 ├── service/           # ShortUrlService, CreateShortUrlCommand, ShortUrlView (US-006);
-│   │                  #   Caller(username, admin) (implemented (US-007))
+│   │                  #   Caller(username, admin) (implemented (US-007));
+│   │                  #   RedirectService (public resolution, read-only template) (implemented (US-008))
 │   └── exception/     # InvalidUrl/InvalidAlias/AliasAlreadyExists/ShortCodeUnavailable exceptions (US-006);
 │                      #   ShortUrlNotFoundException (implemented (US-007))
 ├── domain/            # ShortUrl entity, ShortUrlStatus
@@ -242,7 +244,7 @@ HTTP mappings are implemented in US-009.
 
 | Method | Path | Access | Success | Errors |
 |---|---|---|---|---|
-| GET | `/{code}` | Public | 302 | 404 (unknown / deleted / deactivated) |
+| GET, HEAD | `/{code}` | Public (rule 7) | 302 + `Location` + `Cache-Control: no-store` | 404 (unknown / deleted / deactivated / malformed); 401 only for invalid Basic credentials (D55) |
 | POST | `/api/v1/urls` | USER, ADMIN | 201 + `Location` | 400, 401, 406, 409, 415, 503 |
 | GET | `/api/v1/urls/{code}` | Owner, ADMIN | 200 | 401, 404, 406 |
 | PATCH | `/api/v1/urls/{code}` | Owner, ADMIN | 200 | 400, 401, 404, 409 |
@@ -289,6 +291,26 @@ The full detail is in the US-007 Design note.
   Every hidden case throws the one `ShortUrlNotFoundException`, which becomes `404 SHORT_URL_NOT_FOUND` with an identical body. The 404 hides ownership and details, not existence: existence is already visible through create's 409 (D1).
 - **Transaction:** a read-only `TransactionTemplate` built in the service constructor. There is still no `@Transactional` in `service` or `api`.
 
+### Redirect — *implemented (US-008)*
+
+The full detail is in the US-008 Design note.
+
+- **Security:** rule 7 (`GET`/`HEAD /*`, D32) admits it; `SecurityConfig` is unchanged. Invalid Basic credentials still get 401 (D55).
+- **Controller:** `api/RedirectController`, `@GetMapping("/{code}")` with no class-level mapping, no base class and **no `produces`** (D70). Any `Accept` gets the 302. HEAD is served by the same mapping.
+- **Resolution:** `service/RedirectService.resolve(code)`:
+  1. The D6 format check (`ShortCodeFormat`), **before** the transaction opens, so a malformed code takes no connection (D72).
+  2. `findByShortCode` inside a read-only `TransactionTemplate`. There is no `@Transactional`.
+  3. Only `ACTIVE` links redirect. Unknown, `DEACTIVATED` and `DELETED` codes throw the one `ShortUrlNotFoundException`, which becomes `404 SHORT_URL_NOT_FOUND` with an identical body (D2, D74).
+  4. The service returns the stored URL string.
+- **302:** built with `ResponseEntity.status(FOUND).header(LOCATION, String).cacheControl(noStore())`, never `setLocation(URI)`, `sendRedirect` or `"redirect:"`.
+  - `Location` is the stored string byte for byte when it is printable ASCII. Code points outside `0x21`–`0x7E` are percent-encoded as UTF-8 (D75, RFC 3987 §3.1). Tomcat 10.1 cannot send them: above U+00FF it drops the header and logs its full value.
+  - There is no body and no `Content-Type`.
+  - `Cache-Control` is exactly `no-store`, with no `Pragma` or `Expires`, because Spring Security's cache writer backs off when the header is already set. The redirect's 404 keeps Security's default.
+- **404 negotiation:** the problem+json fallback applies to every parseable `Accept` (`text/html`, `image/*`, `*/*`, none). An unparseable `Accept` gets a 404 with an empty body. It is never a 406.
+- **Routing precedence:** literal mappings (`/error`, `/swagger-ui.html`) win as direct-path matches. Actuator's handler mapping (order −100) runs before `RequestMappingHandlerMapping`. `/{code}` takes every other single segment, including `/favicon.ico`, and bare `/api` for authenticated callers, which gets 404 because it is a reserved word. A QA inventory test pins the single-segment GET mappings to exactly `/{code}`, `/error` and `/swagger-ui.html`.
+- **US-010 seam:** one handler and one response builder. The read transaction has closed before `resolve` returns. US-010 adds an `HttpMethod` parameter, records clicks for GET only after a successful resolution, and fails open (D9, D12). US-008 adds no `ClickRecorder`.
+- **Logging:** DEBUG only, with the well-formed code and a reason (`NOT_FOUND`, `DEACTIVATED`, `DELETED`, `MALFORMED` without the value). Never the target URL or host.
+
 ### Access rules in the filter chain — *implemented (US-005)*
 
 The rules below are evaluated top to bottom, and the first match wins. The exact configuration is in the US-005 Design note §3.
@@ -301,13 +323,14 @@ The rules below are evaluated top to bottom, and the first match wins. The exact
 | 4 | `/actuator`, `/actuator/**` | authenticated (keeps `/actuator` from matching rule 7) |
 | 5 | `DELETE /api/v1/urls/**` | `hasRole(ADMIN)` (D3). It covers trailing-slash and nested variants. 403 is returned before any handler or lookup (US-009 AC6, AC8) |
 | 6 | `/api`, `/api/**` | `hasRole(USER)`; ADMIN passes through the `ADMIN > USER` hierarchy. Ownership (D4) is enforced in the service. It admits `POST /api/v1/urls` (US-006) and `GET`/`HEAD /api/v1/urls/{code}` (implemented (US-007)) |
-| 7 | `GET` and `HEAD /*` (any single segment) | public (D32). Not narrowed to the code regex: US-008 AC6 requires 404, not 401, for malformed codes |
+| 7 | `GET` and `HEAD /*` (any single segment) | public (D32). Not narrowed to the code regex: US-008 AC6 requires 404, not 401, for malformed codes. Admits the redirect `GET`/`HEAD /{code}` (implemented (US-008)). A trailing-slash variant `/{code}/` falls to rule 8 |
 | 8 | anything else | **`denyAll`** (D57): anonymous gets 401 through the entry point, authenticated gets 403 `ACCESS_DENIED`. Only explicitly listed paths can reach a handler, so case or path variants of a restricted prefix (for example `/API/...`) never fall through to a weaker rule |
 
 Rule: no handler other than the redirect may be mapped to a single path segment, because rule 7 would make it public. No method security (`@EnableMethodSecurity`) is used.
 
 **Operational notes (engineer-approved at US-005 G3):**
-- `/error` is a **permitted single-segment GET handler**, reachable through the public `GET /*` rule. It is an allowed exception to the "no single-segment handler other than the redirect" rule, and is harmless while error details stay off (`server.error.include-*: never`).
+- `/error` is a **permitted single-segment GET handler**, reachable through the public `GET /*` rule. It is an allowed exception to the "no single-segment handler other than the redirect" rule, and is harmless while error details stay off (`server.error.include-*: never`). A direct `GET /error` answers **500** (Boot's error JSON), because there are no error attributes; it is recorded in US-008, and monitoring that counts 5xx should exclude it (US-014).
+- `/swagger-ui.html` (springdoc's welcome redirect) is the only other permitted single-segment GET handler (implemented (US-008)). Any static resource at the root, such as `index.html` or `favicon.ico`, would be shadowed by `/{code}`.
 - `org.springframework.security` must **never** be set to DEBUG or TRACE logging in shared environments, because at those levels Spring logs attempted usernames, which would break D52.
 
 ## Key design decisions
@@ -329,6 +352,7 @@ Rule: no handler other than the redirect may be mapped to a single path segment,
 - **Reason:** exact counts, cheap total reads, no rollup table to keep consistent.
 - **Alternative:** a `daily_click_stats` upsert table, or asynchronous events via Kafka/SQS.
 - **Trade-off:** synchronous writes add latency to redirects and contend on the counter row for hot links. A production system would publish click events to a message broker and aggregate them asynchronously. Failures fail open (D12).
+- **Seam** *(implemented (US-008))*: recording hooks into the one redirect handler, after a successful `RedirectService.resolve` and for GET only. `HttpMethod` is resolved as a handler argument, because Spring maps HEAD onto the GET mapping. The read-only resolution transaction has already closed, so a recorder failure cannot roll it back. The response builder and its headers stay as they are. US-010 designs the `ClickRecorder` signature, its transaction and the fail-open wrapper.
 
 ### Time zones for daily stats
 - **Recommendation:** accept only IANA region IDs and `UTC`, validated in Java, then group in PostgreSQL with `AT TIME ZONE`.
@@ -383,6 +407,7 @@ RFC 7807 `ProblemDetail` responses with an `errorCode` extension, produced by a 
   - `ShortUrlNotFoundException` → 404 `SHORT_URL_NOT_FOUND` ("The short URL was not found."), base keys only.
   - It is distinct from `RESOURCE_NOT_FOUND`, which is used for unmapped paths such as `/api/v1/urls/{code}/`. Tests of the details endpoint must therefore assert the `errorCode`, never only the 404.
   - US-009 maps `ShortUrlDeletedException` to the same body (D46).
+  - *Implemented (US-008):* the redirect throws the same exception for malformed, unknown, `DEACTIVATED` (D2) and `DELETED` codes. The handler is unchanged.
 - **Field-level extension (D56):** `errors`, an array of `{field, message}` sorted by field, used only on `VALIDATION_FAILED`, `INVALID_URL` and `INVALID_ALIAS`. It never contains the rejected value.
 - **Shape parity:** advice bodies are serialized by Spring MVC with the context `ObjectMapper`, the same one the security writer uses. So `errorCode` is top-level on both paths, and 401/403 carry the base keys only.
 - **Still outside the advice:** `StrictHttpFirewall` rejections (plain 400) and errors raised in filters before the `DispatcherServlet` (Boot's `/error`).
@@ -403,4 +428,10 @@ RFC 7807 `ProblemDetail` responses with an `errorCode` extension, produced by a 
   - 200 (`application/json`), and 401, 404 and 406 (`application/problem+json`). 405 isn't documented, because it concerns other methods on the path.
   - Exactly one parameter, `code`.
   - The D71 use: after an unexpected 409 on create, a 200 confirms the alias is the caller's own.
+- *Implemented (US-008):* `GET /{code}` is documented under the tag `Redirect`, with **no** security requirement:
+  - one path parameter, `code`, with no `pattern`;
+  - `302` with `Location` and `Cache-Control` headers and no content;
+  - `404` as `application/problem+json` with the `Problem` schema.
+
+  HEAD is described in the text, not listed as an operation.
 - `/v3/api-docs` stays at springdoc's default path and stays public (access-table rule 3).

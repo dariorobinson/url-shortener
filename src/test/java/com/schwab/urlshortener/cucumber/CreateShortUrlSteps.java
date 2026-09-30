@@ -6,8 +6,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.schwab.urlshortener.config.ShortCodeProperties;
 import com.schwab.urlshortener.support.ApiClient;
+import com.schwab.urlshortener.support.EncodedUrls;
 import com.schwab.urlshortener.support.ScriptedShortCodeGenerator;
 import com.schwab.urlshortener.support.ShortUrlTestData;
+import com.schwab.urlshortener.support.TestUsers;
+import com.schwab.urlshortener.validation.LocationEncoder;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;
@@ -61,10 +64,12 @@ public class CreateShortUrlSteps {
     private ApiClient client;
     private ShortUrlTestData data;
     private String user;
+    private String loginSpelling;
     private HttpResponse<String> response;
     private final List<HttpResponse<String>> responses = new ArrayList<>();
     private List<HttpResponse<String>> raceResponses = List.of();
     private String raceAlias;
+    private String submittedUrl;
     private JsonNode apiDocs;
     private JsonNode createOperation;
 
@@ -94,16 +99,30 @@ public class CreateShortUrlSteps {
         };
     }
 
+    /** POST as the signed-in caller, using the login spelling the scenario gave. */
+    private HttpResponse<String> postAsCaller(String body, String... headers) throws Exception {
+        if (user == null || loginSpelling.equals(user)) {
+            return client().post(user, body, headers);
+        }
+        List<String> all = new ArrayList<>(List.of(headers));
+        all.add("Authorization");
+        all.add(ApiClient.basicHeader(loginSpelling, user));
+        return client().post(null, body, all.toArray(String[]::new));
+    }
+
     // ---- Given ----
 
     @Given("{string} is signed in")
     public void isSignedIn(String username) {
-        user = username;
+        // Usernames match case-insensitively (US-006 AC10): "ALICE" signs in as the account alice.
+        user = TestUsers.require(username.toLowerCase(Locale.ROOT));
+        loginSpelling = username;
     }
 
     @Given("the caller is not signed in")
     public void theCallerIsNotSignedIn() {
         user = null;
+        loginSpelling = null;
     }
 
     @Given("a short URL with code {string} already exists")
@@ -135,46 +154,54 @@ public class CreateShortUrlSteps {
 
     @When("the caller creates a short URL for {string}")
     public void theCallerCreatesAShortUrlFor(String url) throws Exception {
-        record(client().post(user, client().createBody(url, null)));
+        record(postAsCaller(client().createBody(url, null)));
     }
 
     @When("the caller creates a short URL for {string} again")
     public void theCallerCreatesAShortUrlForAgain(String url) throws Exception {
-        theCallerCreatesAShortUrlFor(url);
+        record(postAsCaller(client().createBody(url, null)));
     }
 
     @When("the caller creates a short URL for {string} with alias {string}")
     public void theCallerCreatesAShortUrlWithAlias(String url, String alias) throws Exception {
-        record(client().post(user, client().createBody(url, aliasFromCell(alias))));
+        record(postAsCaller(client().createBody(url, aliasFromCell(alias))));
     }
 
     @When("the caller creates a short URL for {string} accepting {string}")
     public void theCallerCreatesAShortUrlAccepting(String url, String accept) throws Exception {
-        record(client().post(user, client().createBody(url, null), "Accept", accept));
+        record(postAsCaller(client().createBody(url, null), "Accept", accept));
     }
 
     @When("the caller creates a short URL for {string} with alias {string} accepting {string}")
     public void theCallerCreatesAShortUrlWithAliasAccepting(String url, String alias, String accept)
             throws Exception {
-        record(client().post(user, client().createBody(url, alias), "Accept", accept));
+        record(postAsCaller(client().createBody(url, alias), "Accept", accept));
     }
 
     @When("the caller creates a short URL for {string} pretending to be host {string}")
     public void theCallerCreatesAShortUrlPretendingToBeHost(String url, String host) throws Exception {
         // Needs -Djdk.httpclient.allowRestrictedHeaders=host on the Failsafe JVM (D66); without it the
         // JDK client throws IllegalArgumentException here, so this step cannot pass vacuously.
-        record(client().post(user, client().createBody(url, null), "Host", host, "X-Forwarded-Host", host));
+        record(postAsCaller(client().createBody(url, null), "Host", host, "X-Forwarded-Host", host));
     }
 
     @When("the caller creates a short URL of {int} characters")
     public void theCallerCreatesAShortUrlOfCharacters(int length) throws Exception {
         String prefix = "https://example.com/";
-        record(client().post(user, client().createBody(prefix + "a".repeat(length - prefix.length()), null)));
+        record(postAsCaller(client().createBody(prefix + "a".repeat(length - prefix.length()), null)));
+    }
+
+    @When("the caller creates a short URL of {int} encoded bytes made of {word} characters")
+    public void theCallerCreatesAShortUrlOfEncodedBytes(int encodedBytes, String kind) throws Exception {
+        submittedUrl = EncodedUrls.withEncodedLength(EncodedUrls.unitFor(kind), encodedBytes);
+        assertThat(LocationEncoder.encode(submittedUrl)).hasSize(encodedBytes);
+        assertThat(submittedUrl.length()).as("within the D11 character limit").isLessThanOrEqualTo(2048);
+        record(postAsCaller(client().createBody(submittedUrl, null)));
     }
 
     @When("the caller posts the raw JSON body {string}")
     public void theCallerPostsTheRawJsonBody(String body) throws Exception {
-        record(client().post(user, body));
+        record(postAsCaller(body));
     }
 
     @When("\"alice\" and \"bob\" create a short URL with alias {string} at the same time")
@@ -332,6 +359,18 @@ public class CreateShortUrlSteps {
     }
 
     // ---- Then: database state ----
+
+    @Then("no short URL exists for the submitted original URL")
+    public void noShortUrlExistsForTheSubmittedOriginalUrl() {
+        assertThat(submittedUrl).isNotNull();
+        assertThat(data().countByOriginalUrl(submittedUrl)).isZero();
+    }
+
+    @Then("exactly one short URL exists for the submitted original URL")
+    public void exactlyOneShortUrlExistsForTheSubmittedOriginalUrl() {
+        assertThat(submittedUrl).isNotNull();
+        assertThat(data().countByOriginalUrl(submittedUrl)).isEqualTo(1);
+    }
 
     @Then("no short URL exists for original URL {string}")
     public void noShortUrlExistsForOriginalUrl(String url) {

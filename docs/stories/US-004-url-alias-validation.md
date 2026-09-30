@@ -175,3 +175,15 @@ Likewise `APP_BASEURL` (canonical) and `APP_BASE_URL` (legacy) both bind `app.ba
 1. "A `SystemEnvironmentPropertySource` used in a test must be named `systemEnvironment` or end with `-systemEnvironment`. Any other name bypasses Spring Boot's `SystemEnvironmentPropertyMapper`, so the test doesn't reflect production binding."
 2. "Test results in story files and post-task reports come from a `clean verify` run."
 3. "Code and test comments don't cite review finding IDs (`Rn`, `Nn`). Describe the behaviour or cite a `Dnn`."
+
+## Post-completion change (engineer-approved at the US-008 escalation, D84)
+- D84 extends D11: a URL whose D75-encoded form exceeds 2048 bytes is now rejected (400 `INVALID_URL`), even if it is at most 2048 characters.
+- `UrlValidatorTest.shouldCountCharactersNotBytesForMultibyteUrlAtLimit` is updated to the new rule in US-008 fix round 2. Previously it accepted 2048 multibyte characters. The encoder is moved to a shared helper used by both `UrlValidator` and the redirect.
+- **Test changes, one by one (US-008 fix round 2):**
+  - **Updated and renamed:** `shouldCountCharactersNotBytesForMultibyteUrlAtLimit` is now `shouldRejectUrlOfMaxCharactersWhenItsEncodedFormExceedsMaxBytes`. 2048-character é, CJK and emoji URLs are now rejected.
+  - **Removed:** `shouldCountSupplementaryCodePointsAsOneCharacter`. Its 2048-emoji input is now rejected under D84. The senior-engineer confirmed nothing observable was lost, because D84 makes the difference between code points and UTF-16 units unobservable for D11.
+  - **Added:** `shouldAcceptAtExactlyMaxEncodedBytesAndRejectOneOver` (ASCII, CJK, emoji and é at 2048/2049 encoded bytes) and `shouldCountCodePointsNotUtf16UnitsOrBytesForShortMultibyteUrls`. The reviewer flagged the latter's name as overclaiming (US-008 N1, open).
+  - **Moved:** the encoder test rows went from `RedirectControllerTest` to the new `LocationEncoderTest`, with no case lost.
+- The story's status stays **Done**. The change is recorded here for traceability.
+
+- **Planned follow-up (engineer-approved at US-008 G3, carried into US-009 as N1):** `shouldCountCodePointsNotUtf16UnitsOrBytesForShortMultibyteUrls` will be renamed to what it proves, or deleted as a duplicate. The actual change will be listed here test by test when US-009 makes it.

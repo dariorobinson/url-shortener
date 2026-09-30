@@ -1,6 +1,6 @@
 # Requirements
 
-Last updated: 2026-09-29 (G2 US-007, D72–D74). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
+Last updated: 2026-09-29 (G3 US-008, D85). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
 
 ## Functional requirements
 
@@ -109,6 +109,17 @@ Last updated: 2026-09-29 (G2 US-007, D72–D74). Decisions below were made by th
 | D72 | Malformed codes | A `{code}` that fails the D6 format (length 3–32, `[A-Za-z0-9]`) returns the **same `404 SHORT_URL_NOT_FOUND`** as an unknown code. It is checked in the service before any DB call, and applies to the management API (US-007, US-009) and the redirect (US-008). |
 | D73 | Cache-Control on management reads | Spring Security's default `Cache-Control` (which includes `no-store`) is kept, and the application does not set it. Tests pin the exact value. |
 | D74 | What a 404 reveals | In the management API, a 404 hides **ownership and details, not existence**. Existence is already revealed by create's 409 (D1) and by the public redirect. The 404 body is identical for malformed, unknown, deleted and not-yours codes. |
+| D75 | Non-ASCII in `Location` | When the redirect builds `Location`, every character outside printable ASCII is percent-encoded as UTF-8 (the RFC 3987 mapping from IRIs to URIs). Stored URLs that are all ASCII are sent byte-identical. This avoids Tomcat dropping the header (and logging the full URL) for characters above U+00FF. |
+| D76 | Redirect `Cache-Control` | The 302 carries exactly `Cache-Control: no-store` (D7), set by the application. Spring Security then adds no `Pragma` or `Expires`. Tests assert an exact match. |
+| D77 | Malformed codes on the redirect | Checked in the service with `ShortCodeFormat` before any transaction or lookup (D72). No route regex, so the 404 is the identical `SHORT_URL_NOT_FOUND` (D74). |
+| D78 | Bare `/api` for an authenticated caller | It reaches the redirect mapping and gets `404 SHORT_URL_NOT_FOUND`, never a 302, because `api` is a built-in reserved word (D48) and can never be a code. |
+| D79 | Query strings on short links | A query string on `/{code}` is **not** forwarded to the target, so links cannot become configurable open redirects. |
+| D80 | `/{code}/` (trailing slash) | It currently gets 401 with a Basic challenge (D57), and browsers show a login prompt. This is accepted for now and revisited in US-014. |
+| D81 | Browser 404 page | The redirect's 404 stays `application/problem+json` for every `Accept`. An HTML 404 page is on the production roadmap. |
+| D82 | Direct `GET /error` | It returns 500 today, which can inflate 5xx monitoring. This is recorded and handled in US-014. |
+| D83 | No DB CHECK for reserved words | Reserved words are enforced only by `AliasPolicy` (D29, D48), with no database CHECK, so the list stays configurable. |
+| D84 | Encoded URL length (extends D11) | Create also rejects an `originalUrl` whose D75-encoded (ASCII wire) form exceeds **2048 bytes**, with `400 INVALID_URL`. This is in addition to D11's 2048-character limit. `UrlValidator` computes it with the same encoder the redirect uses, in one shared helper, so the rule is defined once. The redirect's `Location` therefore never exceeds 2048 bytes. Tomcat's default `max-http-response-header-size` is unchanged. |
+| D85 | D84 is enforced in the application only | The D84 encoded-length limit is enforced only at create, in `UrlValidator`, with **no database CHECK**. A row inserted by raw SQL can still hold a URL whose encoded form breaks the redirect (Tomcat returns a bare 500 for that link, and the URL is not logged). This is an accepted gap, like D83. The application is the only writer. |
 
 ## Environment and platform decisions
 
