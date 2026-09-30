@@ -931,3 +931,12 @@ Round 1:
 Round 2:
 
 4. "After any bulk search-and-replace in tests, reviewers check the `git diff` of each touched file for broken or out-of-order imports and for leftover inline fully qualified names, not just a passing build."
+
+## Post-completion change (US-011; mid-engineer)
+- Status stays **Done**. `GlobalExceptionHandler` gains one handler for `InvalidStatsQueryException` (stats query validation, D99), so its Done-story test class is extended.
+- **`api/error/GlobalExceptionHandlerTest`**
+  - **Edited, no assertion changed:** new imports (`StatsPeriod`, `InvalidStatsQueryException`, `StatsParameter`, `ServletRequestBindingException`).
+  - **Added:** `shouldMapInvalidStatsQueryToSortedFieldViolationsWithTheQueryDetailAndNoValue`, `shouldKeepTheBodyTextOfValidationFailedForRequestBodies`, `shouldMapAnUnexpectedOrRepeatedParameterExceptionToMalformedRequestWithoutItsMessage`.
+  - **Unchanged:** every other test in the class.
+- **QA-owned support edit made in US-011 (qa-tester)**
+  - **`support/ApiClient`:** added `headersExceptFraming(HttpResponse)` (drops Date, Content-Length, Transfer-Encoding and Connection; a static constant set and `Locale.ROOT` are used) and the `Locale` import. No existing method changed, so no US-006 test is affected.

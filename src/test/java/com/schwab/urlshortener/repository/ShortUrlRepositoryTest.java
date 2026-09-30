@@ -351,6 +351,19 @@ class ShortUrlRepositoryTest {
     }
 
     @Test
+    void shouldNotMoveLastAccessedAtBackwards() {
+        Long id = repository.saveAndFlush(newActive("abc1234", T0)).getId();
+
+        // Clicks committed out of order (D94): the later instant first.
+        assertThat(repository.recordClick(id, CLICK_2)).isEqualTo(1);
+        assertThat(repository.recordClick(id, CLICK_1)).isEqualTo(1);
+
+        // The writes happened (the counter moved twice) and the time stayed at the latest click.
+        assertThat(queryColumn("click_count", Long.class, id)).isEqualTo(2L);
+        assertThat(queryInstant("last_accessed_at", id)).isEqualTo(CLICK_2);
+    }
+
+    @Test
     void shouldNotCountAClickOnADeactivatedOrDeletedRowOrAnUnknownId() {
         Long active = repository.saveAndFlush(newActive("act1234", T0)).getId();
         Long deactivated = repository.saveAndFlush(newActive("dea1234", T0)).getId();

@@ -16,10 +16,9 @@ Development runs through the agents in `.claude/agents/`:
 | `senior-engineer` | Read-only review of code and tests |
 
 **Main session rules:**
-- For SDLC work (planning, stories, implementation, review), invoke the `orchestrator` agent in the foreground rather than doing the work directly.
-- The orchestrator ends each turn at an approval gate with a `⏸ CHECKPOINT`. Relay it to the engineer faithfully and completely — do not summarize away risks, findings, or decisions needed.
-- Pass the engineer's decision back with `SendMessage` to the same orchestrator, quoting it exactly. Never approve on the engineer's behalf.
-- If the orchestrator's context is lost, start a new one; it rebuilds state from `docs/stories/`, `docs/requirements.md`, and `docs/ai-usage-log.md`.
+- US-001–US-011 were delivered through the agent team above.
+- **From US-012 onward (engineer direction, 2026-09-30), the main session does the work directly and does not invoke the orchestrator or any subagent.** The same discipline still applies: approval gates with the engineer (backlog/design/story completion/commit), the Recommendation / Reason / Alternative / Trade-off format, tests for every behaviour change, the post-task report, and AI usage log entries.
+- Never approve on the engineer's behalf.
 
 ## Tech stack
 
@@ -102,6 +101,11 @@ Base package: `com.schwab.urlshortener`. `JAVA_HOME` must point to JDK 25.
 - A test whose name claims to distinguish two behaviours (e.g. code points vs UTF-16 units) includes an input on which they differ; if a later rule makes the difference unobservable, rename or remove the test and record it.
 - Any change to a Done story's tests is listed test by test (updated, renamed, removed, added) in that story's post-completion section.
 - Every review-finding ID raised in a round has a row in the story's Review log with its resolution, including those the orchestrator fixes.
+- Review-finding labels (`Rn`, `Nn`) are never cited in code, tests, or SQL.
+- Every edit to a Done story's tests is listed by exact method name in the owning story, with a pointer from any other affected story.
+- A test that relies on a database session setting asserts it (e.g. with `SHOW`) before relying on it.
+- Error types that must never echo client input name their fields with an enum, not free-form strings.
+- Build counts quoted in story notes state which review round (or final build) they come from.
 - Every `@WebMvcTest` imports `SecuritySliceTestConfiguration`, so it gets the real security filter chain and production Jackson settings (D89); slices never import `SecurityConfig`, `UserAccountsConfig`, or `JacksonConfig` individually.
 - A "value is never logged" assertion checks every form the value takes on the way out: raw and encoded (e.g. D75 percent-encoding).
 - Test fixtures that seed prior state (transitions, audit fields) use a timestamp and actor different from those the code under test will write, so "unchanged" assertions can fail.
@@ -125,7 +129,7 @@ Base package: `com.schwab.urlshortener`. `JAVA_HOME` must point to JDK 25.
 ## Git
 
 - Commit locally at the end of major features, only after the engineer approves. Never push without explicit approval.
-- Only the orchestrator commits.
+- Commits were made by the orchestrator through US-011; from US-012 onward the main session commits, still only after the engineer approves.
 
 ## Key documents
 

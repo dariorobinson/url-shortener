@@ -11,6 +11,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -27,6 +28,8 @@ public final class ApiClient {
     public static final String CREATE_PATH = "/api/v1/urls";
 
     private static final HttpClient HTTP = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
+    private static final Set<String> FRAMING_AND_DATE_HEADERS =
+            Set.of("date", "content-length", "transfer-encoding", "connection");
 
     private final int port;
     private final ObjectMapper mapper;
@@ -132,6 +135,22 @@ public final class ApiClient {
         Map<String, List<String>> headers = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         response.headers().map().forEach((name, values) -> {
             if (!"date".equalsIgnoreCase(name) && !"content-length".equalsIgnoreCase(name)) {
+                headers.put(name, values);
+            }
+        });
+        return headers;
+    }
+
+    /**
+     * Headers that describe the representation, keyed case-insensitively: everything except Date and the
+     * message-framing headers (Content-Length, Transfer-Encoding, Connection). A HEAD response has no body to
+     * frame, so it legitimately lacks the chunked framing of the matching GET, and Tomcat adds Connection: close
+     * to some 4xx GET responses only.
+     */
+    public static Map<String, List<String>> headersExceptFraming(HttpResponse<String> response) {
+        Map<String, List<String>> headers = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        response.headers().map().forEach((name, values) -> {
+            if (!FRAMING_AND_DATE_HEADERS.contains(name.toLowerCase(Locale.ROOT))) {
                 headers.put(name, values);
             }
         });

@@ -830,3 +830,7 @@ Round 2:
 5. "Test fixtures that set up earlier state (transitions, audit fields) use a timestamp and actor different from the ones the code under test will write. Otherwise "unchanged" assertions cannot fail."
 
 **G3 (2026-09-30):** approved by the engineer. QA observations (a)–(d) are accepted. N1 and the Javadoc half of N2 are carried into US-010. Status: **Done**.
+
+## Post-completion changes
+
+- **US-011 (2026-09-30):** `ShortUrlServiceTest.shouldTakeTheTimestampFromTheClockExactlyOncePerDeleteRequest` (added in this story) had its `new ShortUrlService(...)` call site updated to pass the new `ClickEventRepository` mock, and was re-wrapped to stay within 120 characters. No assertion changed. The full listing for `ShortUrlServiceTest` is in US-007's Post-completion section.

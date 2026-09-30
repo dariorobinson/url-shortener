@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -23,9 +25,11 @@ import com.schwab.urlshortener.domain.ShortUrl;
 import com.schwab.urlshortener.domain.ShortUrlStatus;
 import com.schwab.urlshortener.domain.exception.ShortUrlAlreadyActiveException;
 import com.schwab.urlshortener.domain.exception.ShortUrlAlreadyDeactivatedException;
+import com.schwab.urlshortener.repository.ClickEventRepository;
 import com.schwab.urlshortener.repository.ShortUrlRepository;
 import com.schwab.urlshortener.service.exception.AliasAlreadyExistsException;
 import com.schwab.urlshortener.service.exception.InvalidAliasException;
+import com.schwab.urlshortener.service.exception.InvalidStatsQueryException;
 import com.schwab.urlshortener.service.exception.InvalidUrlException;
 import com.schwab.urlshortener.service.exception.ShortCodeUnavailableException;
 import com.schwab.urlshortener.service.exception.ShortUrlConcurrentModificationException;
@@ -37,6 +41,8 @@ import jakarta.persistence.OptimisticLockException;
 import java.lang.reflect.Method;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.List;
@@ -80,6 +86,7 @@ class ShortUrlServiceTest {
     private static final String FIRST_ADMIN = "first-admin";
 
     private final ShortUrlRepository repository = mock(ShortUrlRepository.class);
+    private final ClickEventRepository clickEvents = mock(ClickEventRepository.class);
     private final ShortCodeGenerator generator = mock(ShortCodeGenerator.class);
     private final PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
     private final TransactionStatus transactionStatus = mock(TransactionStatus.class);
@@ -109,7 +116,7 @@ class ShortUrlServiceTest {
     }
 
     private ShortUrlService serviceWithMaxAttempts(int maxAttempts) {
-        return new ShortUrlService(repository, generator, new UrlValidator("https://short.example"),
+        return new ShortUrlService(repository, clickEvents, generator, new UrlValidator("https://short.example"),
                 new AliasPolicy(List.of()), clock, new ShortCodeProperties(7, maxAttempts), transactionManager);
     }
 
@@ -868,8 +875,9 @@ class ShortUrlServiceTest {
     void shouldTakeTheTimestampFromTheClockExactlyOncePerRequest() {
         Clock counting = mock(Clock.class);
         when(counting.instant()).thenReturn(NOW);
-        ShortUrlService counted = new ShortUrlService(repository, generator, new UrlValidator("https://short.example"),
-                new AliasPolicy(List.of()), counting, new ShortCodeProperties(7, 5), transactionManager);
+        ShortUrlService counted = new ShortUrlService(repository, clickEvents, generator,
+                new UrlValidator("https://short.example"), new AliasPolicy(List.of()), counting,
+                new ShortCodeProperties(7, 5), transactionManager);
         stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
 
         counted.setActive("Abc1234", false, ALICE);
@@ -881,8 +889,9 @@ class ShortUrlServiceTest {
     void shouldTakeTheTimestampFromTheClockExactlyOncePerDeleteRequest() {
         Clock counting = mock(Clock.class);
         when(counting.instant()).thenReturn(NOW);
-        ShortUrlService counted = new ShortUrlService(repository, generator, new UrlValidator("https://short.example"),
-                new AliasPolicy(List.of()), counting, new ShortCodeProperties(7, 5), transactionManager);
+        ShortUrlService counted = new ShortUrlService(repository, clickEvents, generator,
+                new UrlValidator("https://short.example"), new AliasPolicy(List.of()), counting,
+                new ShortCodeProperties(7, 5), transactionManager);
         stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
 
         counted.delete("Abc1234", ADMIN);
@@ -1153,6 +1162,228 @@ class ShortUrlServiceTest {
                 .isInstanceOf(ShortUrlAlreadyDeactivatedException.class);
 
         assertThat(logs.list).noneSatisfy(e -> assertThat(e.getLevel().isGreaterOrEqual(Level.INFO)).isTrue());
+    }
+
+    // ---- US-011: stats (AC4, AC5, AC6, AC15, AC16; D95, D102, D104, D105)
+
+    private static final long STATS_ID = 42L;
+
+    private ShortUrl storedWithClicks(String code, String owner, ShortUrlStatus status) {
+        ShortUrl url = stored(code, owner, status);
+        ReflectionTestUtils.setField(url, "id", STATS_ID);
+        ReflectionTestUtils.setField(url, "clickCount", 7L);
+        ReflectionTestUtils.setField(url, "lastAccessedAt", NOW_MICROS);
+        return url;
+    }
+
+    @Test
+    void shouldBuildStatsFromTheEntityAndTheDensifiedRows() {
+        storedWithClicks("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        when(clickEvents.countClicksPerDay(eq(STATS_ID), anyList(), any(Instant.class)))
+                .thenReturn(List.of(new ClickEventRepository.DayCount(1, 2),
+                        new ClickEventRepository.DayCount(3, 4)));
+
+        ShortUrlStats stats = service.stats("Abc1234", "America/New_York", "2026-03-07", "2026-03-09", ALICE);
+
+        assertThat(stats.shortCode()).isEqualTo("Abc1234");
+        assertThat(stats.zoneId()).isEqualTo("America/New_York");
+        assertThat(stats.from()).isEqualTo(LocalDate.of(2026, 3, 7));
+        assertThat(stats.to()).isEqualTo(LocalDate.of(2026, 3, 9));
+        // totalClicks is the entity's counter (7), clicksInRange the sum of the rows (6): deliberately different.
+        assertThat(stats.totalClicks()).isEqualTo(7L);
+        assertThat(stats.clicksInRange()).isEqualTo(6L);
+        assertThat(stats.lastAccessedAt()).isEqualTo(NOW_MICROS);
+        assertThat(stats.daily()).containsExactly(new DailyClicks(LocalDate.of(2026, 3, 7), 2),
+                new DailyClicks(LocalDate.of(2026, 3, 8), 0), new DailyClicks(LocalDate.of(2026, 3, 9), 4));
+        ArgumentCaptor<List<Instant>> starts = ArgumentCaptor.captor();
+        ArgumentCaptor<Instant> end = ArgumentCaptor.forClass(Instant.class);
+        verify(clickEvents).countClicksPerDay(eq(STATS_ID), starts.capture(), end.capture());
+        assertThat(starts.getValue()).containsExactly(Instant.parse("2026-03-07T05:00:00Z"),
+                Instant.parse("2026-03-08T05:00:00Z"), Instant.parse("2026-03-09T04:00:00Z"));
+        assertThat(end.getValue()).isEqualTo(Instant.parse("2026-03-10T04:00:00Z"));
+    }
+
+    @Test
+    void shouldTakeTotalClicksFromTheCounterEvenWhenTheRowsDisagree() {
+        storedWithClicks("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        when(clickEvents.countClicksPerDay(eq(STATS_ID), anyList(), any(Instant.class))).thenReturn(List.of());
+
+        ShortUrlStats stats = service.stats("Abc1234", "UTC", "2026-03-01", "2026-03-01", ALICE);
+
+        assertThat(stats.totalClicks()).isEqualTo(7L);
+        assertThat(stats.clicksInRange()).isZero();
+        assertThat(stats.daily()).containsExactly(new DailyClicks(LocalDate.of(2026, 3, 1), 0));
+    }
+
+    @Test
+    void shouldReturnNullLastAccessedAtBeforeTheFirstClick() {
+        ShortUrl url = storedWithClicks("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        ReflectionTestUtils.setField(url, "lastAccessedAt", null);
+        when(clickEvents.countClicksPerDay(eq(STATS_ID), anyList(), any(Instant.class))).thenReturn(List.of());
+
+        assertThat(service.stats("Abc1234", null, null, null, ALICE).lastAccessedAt()).isNull();
+    }
+
+    @Test
+    void shouldApplyTheDefaultsFromTheInjectedClockInTheRequestedZone() {
+        storedWithClicks("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        when(clickEvents.countClicksPerDay(eq(STATS_ID), anyList(), any(Instant.class))).thenReturn(List.of());
+
+        ShortUrlStats utc = service.stats("Abc1234", null, null, null, ALICE);
+        ShortUrlStats auckland = service.stats("Abc1234", "Pacific/Auckland", null, null, ALICE);
+
+        // NOW is 2026-09-29T14:03Z: still the 29th in UTC, already the 30th in Auckland (+13).
+        assertThat(utc.zoneId()).isEqualTo("UTC");
+        assertThat(utc.to()).isEqualTo(LocalDate.of(2026, 9, 29));
+        assertThat(utc.from()).isEqualTo(LocalDate.of(2026, 8, 31));
+        assertThat(utc.daily()).hasSize(30);
+        assertThat(auckland.to()).isEqualTo(LocalDate.of(2026, 9, 30));
+    }
+
+    @Test
+    void shouldDefaultToUtcDaysEvenWhenTheInjectedClockHasAnotherZone() {
+        Clock tokyo = Clock.fixed(Instant.parse("2026-03-10T20:00:00Z"), ZoneId.of("Asia/Tokyo"));
+        ShortUrlService inTokyo = new ShortUrlService(repository, clickEvents, generator,
+                new UrlValidator("https://short.example"), new AliasPolicy(List.of()), tokyo,
+                new ShortCodeProperties(7, 5), transactionManager);
+        storedWithClicks("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        when(clickEvents.countClicksPerDay(eq(STATS_ID), anyList(), any(Instant.class))).thenReturn(List.of());
+
+        // 20:00Z is already 2026-03-11 in Tokyo; UTC is the default zone, whatever zone the clock carries.
+        assertThat(inTokyo.stats("Abc1234", null, null, null, ALICE).to()).isEqualTo(LocalDate.of(2026, 3, 10));
+    }
+
+    @Test
+    void shouldRunStatsInAReadOnlyRepeatableReadTransactionThatCommits() {
+        storedWithClicks("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        when(clickEvents.countClicksPerDay(eq(STATS_ID), anyList(), any(Instant.class))).thenReturn(List.of());
+
+        service.stats("Abc1234", null, null, null, ALICE);
+
+        ArgumentCaptor<TransactionDefinition> definition = ArgumentCaptor.forClass(TransactionDefinition.class);
+        verify(transactionManager, times(1)).getTransaction(definition.capture());
+        assertThat(definition.getValue().isReadOnly()).isTrue();
+        assertThat(definition.getValue().getIsolationLevel())
+                .isEqualTo(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+        assertThat(definition.getValue().getPropagationBehavior())
+                .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRED);
+        verify(transactionManager, times(1)).commit(transactionStatus);
+        // The other templates are unchanged: get stays on the default isolation.
+        service.get("Abc1234", ALICE);
+        ArgumentCaptor<TransactionDefinition> all = ArgumentCaptor.forClass(TransactionDefinition.class);
+        verify(transactionManager, times(2)).getTransaction(all.capture());
+        assertThat(all.getAllValues().get(1).getIsolationLevel()).isEqualTo(TransactionDefinition.ISOLATION_DEFAULT);
+    }
+
+    @Test
+    void shouldReadTheClockExactlyOncePerStatsRequest() {
+        Clock counting = mock(Clock.class);
+        when(counting.instant()).thenReturn(NOW);
+        ShortUrlService counted = new ShortUrlService(repository, clickEvents, generator,
+                new UrlValidator("https://short.example"), new AliasPolicy(List.of()), counting,
+                new ShortCodeProperties(7, 5), transactionManager);
+        storedWithClicks("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        when(clickEvents.countClicksPerDay(eq(STATS_ID), anyList(), any(Instant.class))).thenReturn(List.of());
+
+        counted.stats("Abc1234", null, null, null, ALICE);
+
+        verify(counting, times(1)).instant();
+    }
+
+    @ParameterizedTest
+    @CsvSource(value = {"+05:00,,", "UTC,2026-02-30,", "UTC,,bad", "UTC,2026-03-09,2026-03-07",
+            "UTC,2025-01-01,2026-01-02", "'',,"})
+    void shouldRejectBadParametersBeforeAnyTransactionOrRepositoryInteraction(String timezone, String from,
+            String to) {
+        assertThatThrownBy(() -> service.stats("Abc1234", timezone, from, to, ALICE))
+                .isExactlyInstanceOf(InvalidStatsQueryException.class);
+
+        verifyNoInteractions(repository, clickEvents, transactionManager);
+        // Positive control: the same code with valid parameters does reach the repository.
+        storedWithClicks("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        when(clickEvents.countClicksPerDay(eq(STATS_ID), anyList(), any(Instant.class))).thenReturn(List.of());
+        service.stats("Abc1234", "UTC", "2026-03-01", "2026-03-01", ALICE);
+        verify(repository, times(1)).findByShortCode("Abc1234");
+    }
+
+    @Test
+    void shouldValidateParametersBeforeVisibilityForACodeTheCallerCannotSee() {
+        storedWithClicks("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+
+        assertThatThrownBy(() -> service.stats("Abc1234", "+05:00", null, null, BOB))
+                .isExactlyInstanceOf(InvalidStatsQueryException.class);
+        assertThatThrownBy(() -> service.stats("a-b", "+05:00", null, null, BOB))
+                .isExactlyInstanceOf(InvalidStatsQueryException.class);
+        assertThatThrownBy(() -> service.stats("Abc1234", "UTC", null, null, BOB))
+                .isExactlyInstanceOf(ShortUrlNotFoundException.class);
+
+        verify(repository, times(1)).findByShortCode("Abc1234");
+    }
+
+    @Test
+    void shouldLogOnlyTheParameterNamesWhenParametersAreRejected() {
+        assertThatThrownBy(() -> service.stats("Abc1234", "secret-zone-marker", "bad-date-marker", null, ALICE))
+                .isInstanceOf(InvalidStatsQueryException.class);
+
+        assertThat(logs.list).hasSize(1);
+        assertThat(logs.list.get(0).getLevel()).isEqualTo(Level.DEBUG);
+        assertThat(joined(logs)).contains("VALIDATION_FAILED").contains("timezone").contains("from")
+                .doesNotContain("marker").doesNotContain("Abc1234");
+    }
+
+    @Test
+    void shouldGiveTheSameNotFoundForMalformedUnknownDeletedAndNotOwnedCodesAndNeverCountClicks() {
+        storedWithClicks("Owned12", "alice", ShortUrlStatus.ACTIVE);
+        storedWithClicks("Del1234", "alice", ShortUrlStatus.DELETED);
+        when(repository.findByShortCode("Nope123")).thenReturn(Optional.empty());
+
+        List<Throwable> thrown = List.of(
+                catchThrowable(() -> service.stats("a-b", null, null, null, ALICE)),
+                catchThrowable(() -> service.stats("Nope123", null, null, null, ALICE)),
+                catchThrowable(() -> service.stats("Del1234", null, null, null, ADMIN)),
+                catchThrowable(() -> service.stats("Del1234", null, null, null, ALICE)),
+                catchThrowable(() -> service.stats("Owned12", null, null, null, BOB)));
+
+        assertThat(thrown).allSatisfy(t -> assertThat(t).isExactlyInstanceOf(ShortUrlNotFoundException.class));
+        assertThat(thrown).extracting(Throwable::getMessage).containsOnly("Short URL not found");
+        verifyNoInteractions(clickEvents);
+        // Positive control: the owner of the same link gets stats through the same service instance.
+        when(clickEvents.countClicksPerDay(eq(STATS_ID), anyList(), any(Instant.class))).thenReturn(List.of());
+        assertThat(service.stats("Owned12", null, null, null, ALICE).shortCode()).isEqualTo("Owned12");
+    }
+
+    @ParameterizedTest
+    @CsvSource({"alice,false", "admin,true"})
+    void shouldReturnStatsOfADeactivatedLinkToItsOwnerAndToAnAdminButNotToAnotherUser(String username,
+            boolean admin) {
+        storedWithClicks("Abc1234", "alice", ShortUrlStatus.DEACTIVATED);
+        when(clickEvents.countClicksPerDay(eq(STATS_ID), anyList(), any(Instant.class))).thenReturn(List.of());
+
+        ShortUrlStats stats = service.stats("Abc1234", null, null, null, new Caller(username, admin));
+
+        assertThat(stats.shortCode()).isEqualTo("Abc1234");
+        assertThat(stats.totalClicks()).isEqualTo(7L);
+        assertThatThrownBy(() -> service.stats("Abc1234", null, null, null, BOB))
+                .isExactlyInstanceOf(ShortUrlNotFoundException.class);
+    }
+
+    @Test
+    void shouldLetAnAdminReadStatsOfAnotherUsersActiveLink() {
+        storedWithClicks("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        when(clickEvents.countClicksPerDay(eq(STATS_ID), anyList(), any(Instant.class))).thenReturn(List.of());
+
+        assertThat(service.stats("Abc1234", null, null, null, ADMIN).shortCode()).isEqualTo("Abc1234");
+    }
+
+    @Test
+    void shouldPropagateAnOutOfRangeBucketIndexAsAnIllegalStateException() {
+        storedWithClicks("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        when(clickEvents.countClicksPerDay(eq(STATS_ID), anyList(), any(Instant.class)))
+                .thenReturn(List.of(new ClickEventRepository.DayCount(2, 1)));
+
+        assertThatThrownBy(() -> service.stats("Abc1234", "UTC", "2026-03-01", "2026-03-01", ALICE))
+                .isExactlyInstanceOf(IllegalStateException.class);
+        verify(transactionManager, times(1)).rollback(transactionStatus);
     }
 
     // ---- transaction boundary guard

@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-09-30 (US-006 implemented; content negotiation per D70; US-007 implemented; US-008 implemented; US-009 implemented; US-010 implemented). Each section is marked *planned*, *designed (US-nnn)*, or *implemented (US-nnn)* as work progresses.
+Last updated: 2026-09-30 (US-006 implemented; content negotiation per D70; US-007 implemented; US-008 implemented; US-009 implemented; US-010 implemented; US-011 design approved (G2), D95–D105). Each section is marked *planned*, *designed (US-nnn)*, or *implemented (US-nnn)* as work progresses.
 
 ## Overview
 
@@ -134,6 +134,7 @@ support/IntegrationTestBase     support/@RepositoryTest
   - `support/TestClock` extends `Clock`. It is a `@Primary` bean in `support/TestClockConfiguration`, which `IntegrationTestBase` imports, so there is still one context. It delegates to the production `clock` bean unless a test calls `setInstant`/`advance`.
   - `reset()` restores real time. A JUnit extension on `IntegrationTestBase` resets it before and after every IT test, and a Cucumber hook resets it every scenario. It is thread-safe (`AtomicReference`).
   - `ClockConfig` is unchanged, and so is production code.
+- **Click fixtures at exact instants** *(designed (US-011), design approved (G2))*: `ShortUrlTestData.seedClickEvents(code, Instant...)` inserts `click_event` rows bound as `OffsetDateTime` at UTC, never `Timestamp`, so DST-hour fixtures don't depend on the JVM zone. It updates `click_count` and `last_accessed_at` the same way the recorder does (D94).
 - **Truncation with V2** *(implemented (US-010))*: `ShortUrlTestData.truncate()` is `TRUNCATE TABLE click_event, short_url`. PostgreSQL refuses to truncate a table referenced by a foreign key unless every referencing table is in the same command. There is no `CASCADE`.
 - **Forged `Host` headers** *(implemented (US-006))*: the Failsafe `argLine` gets `-Djdk.httpclient.allowRestrictedHeaders=host`. It is test-only and never set in runtime JVM options.
 - **Repository tests** *(implemented (US-002))*:
@@ -151,15 +152,19 @@ com.schwab.urlshortener
 ├── api/               # ShortUrlController, ShortUrlLinks (shortUrl/Location from APP_BASE_URL) (US-006);
 │                      #   RedirectController (GET/HEAD /{code}, never `produces`) (implemented (US-008))
 │   ├── dto/           # CreateShortUrlRequest, ShortUrlResponse (shared with US-007) (US-006);
-│   │                  #   UpdateShortUrlRequest (PATCH body) (implemented (US-009))
+│   │                  #   UpdateShortUrlRequest (PATCH body) (implemented (US-009));
+│   │                  #   ShortUrlStatsResponse, DailyClicksResponse (designed (US-011), design approved (G2))
 │   └── error/         # ErrorCode, ProblemDetails (implemented (US-005));
 │                      #   GlobalExceptionHandler, FieldViolation, ErrorResponseSchema (docs only) (US-006)
 ├── service/           # ShortUrlService, CreateShortUrlCommand, ShortUrlView (US-006);
 │   │                  #   Caller(username, admin) (implemented (US-007));
-│   │                  #   RedirectService (public resolution, read-only template) (implemented (US-008))
+│   │                  #   RedirectService (public resolution, read-only template) (implemented (US-008));
+│   │                  #   StatsPeriod (zone/date parsing, defaults, day starts, densify), ShortUrlStats,
+│   │                  #   DailyClicks (designed (US-011), design approved (G2))
 │   └── exception/     # InvalidUrl/InvalidAlias/AliasAlreadyExists/ShortCodeUnavailable exceptions (US-006);
 │                      #   ShortUrlNotFoundException (implemented (US-007));
-│                      #   ShortUrlConcurrentModificationException (implemented (US-009))
+│                      #   ShortUrlConcurrentModificationException (implemented (US-009));
+│                      #   InvalidStatsQueryException (designed (US-011), design approved (G2))
 ├── domain/            # ShortUrl entity, ShortUrlStatus; ClickEvent (immutable, click_event) (implemented (US-010))
 │   └── exception/     # ShortUrlAlreadyDeactivated/AlreadyActive/Deleted exceptions
 ├── shortcode/         # ShortCodeGenerator + implementation; ShortCodeFormat (D6 format check, shared by
@@ -168,7 +173,8 @@ com.schwab.urlshortener
 ├── analytics/         # ClickRecorder (interface) + JpaClickRecorder (REQUIRES_NEW template) (implemented (US-010))
 └── repository/        # ShortUrlRepository (Spring Data JPA); PostgresServerErrors (US-006; the only
                        #   class that imports org.postgresql.*); ClickEventRepository and
-                       #   ShortUrlRepository.recordClick (implemented (US-010))
+                       #   ShortUrlRepository.recordClick (implemented (US-010));
+                       #   ClickEventRepository.countClicksPerDay (designed (US-011), design approved (G2))
 ```
 
 ## Database schema (V1 *implemented (US-002)*, amended by D47; V2 *implemented (US-010)*)
@@ -261,6 +267,7 @@ HTTP mappings: *implemented (US-009)* (see *Lifecycle* under REST API). `ShortUr
 - `ShortUrlRepository` gains `int recordClick(long id, Instant clickedAt)`, a native `@Modifying(flushAutomatically = true, clearAutomatically = true)` `@Query`:
   `UPDATE short_url SET click_count = click_count + 1, last_accessed_at = :clickedAt WHERE id = :id AND status = 'ACTIVE'`.
   - It never touches `version` or `updated_at` (D16, D27).
+  - *D94, designed (US-011), design approved (G2):* the SET becomes `last_accessed_at = GREATEST(last_accessed_at, :clickedAt)`, so `last_accessed_at` always equals the latest `click_event.clicked_at` even when clicks commit out of order. PostgreSQL's `GREATEST` ignores NULL, so the first click still sets it. The literal pinned in `RepositoryAnnotationsTest` changes with it.
   - It has no `@Transactional`, and Spring Data gives declared query methods none, so it runs only inside the caller's transaction.
   - A reflection unit test (`RepositoryAnnotationsTest`) pins the SQL, both flags, the absence of `@Transactional`, and that no other repository method is `@Modifying`. This covers the repository-interface gap in `NoTransactionalAnnotationIT`.
 - `ClickEventRepository` is `JpaRepository<ClickEvent, Long>`. `ClickEvent` is `@Immutable`, with a plain `long shortUrlId` (no association) and `ClickEvent.of(id, at)`, which truncates to microseconds.
@@ -274,7 +281,7 @@ HTTP mappings: *implemented (US-009)* (see *Lifecycle* under REST API). `ShortUr
 | GET | `/api/v1/urls/{code}` | Owner, ADMIN | 200 | 401, 404, 406 |
 | PATCH | `/api/v1/urls/{code}` | Owner, ADMIN | 200 | 400, 401, 404, 406, 409, 415 (implemented (US-009)) |
 | DELETE | `/api/v1/urls/{code}` | ADMIN | 204 | 401, 403, 404, 406, 409 (implemented (US-009)) |
-| GET | `/api/v1/urls/{code}/stats?from&to&timezone` | Owner, ADMIN | 200 | 400, 401, 404 |
+| GET, HEAD | `/api/v1/urls/{code}/stats?timezone&from&to` (`timezone`: `UTC` or JDK tzdb ID, default `UTC`, D96; `from`/`to`: inclusive `yyyy-MM-dd` in that zone, default `to` = today, `from` = `max(to − 29, 1970-01-01)`, max 366 days, D97, D98) | Owner, ADMIN | 200 `{shortCode, timezone, from, to, totalClicks, clicksInRange, lastAccessedAt, daily: [{date, clicks}]}` (D101) | 400 `VALIDATION_FAILED` (D99) / `MALFORMED_REQUEST` (D100), 401, 404, 406 (designed (US-011), design approved (G2)) |
 
 **Content negotiation rule (D70):** management API mappings declare `produces = application/json` (class-level on `ShortUrlController`, never `application/problem+json`); the redirect never does. Every `/api/v1/urls` operation therefore also returns 406 for an `Accept` that excludes `application/json`, DELETE included. The 406 is decided at mapping lookup, before the body is read or the service runs, so a rejected request never creates or changes anything. Precedence and the unparseable-`Accept` deviation are under *Error handling*.
 
@@ -372,6 +379,23 @@ The full detail is in the US-009 Design note. There is no migration, and `Securi
 - **Request parsing (D88, D89, D90):** PATCH accepts `application/json` only (other types get 415). `active` must be a real JSON boolean: `"false"`, `0` and `1` get `400 MALFORMED_REQUEST`, and a missing or null value gets `400 VALIDATION_FAILED`. Jackson's scalar coercion is disabled for the Boolean type only, through `config/JacksonConfig`, which every web slice imports via the shared slice configuration. Click data in the PATCH 200 is as read inside that transaction (D90).
 - **405 `Allow`:** a 405 on `/api/v1/urls/{code}` lists `GET, DELETE, PATCH`. Spring leaves out the implicit HEAD, although HEAD is served.
 
+### Statistics — *designed (US-011), design approved (G2); D95–D105*
+
+The full detail is in the US-011 Design note. There is no migration, and `SecurityConfig` and `ErrorCode` are unchanged (D99).
+
+- **`GET`/`HEAD /api/v1/urls/{code}/stats?timezone&from&to`** on `ShortUrlController`:
+  - Admitted by rule 6.
+  - Inherits the class-level `produces` (D70).
+  - Parameters are bound raw, as `@RequestParam MultiValueMap<String, String>`. A name outside `timezone`, `from` and `to`, or a repeated name, gets `400 MALFORMED_REQUEST` (D100, like D59 for bodies).
+- **`ShortUrlService.stats`:**
+  1. `StatsPeriod.resolve(timezone, from, to, clock.instant())` validates the parameters and applies defaults. It runs before any transaction, so validation (400) precedes visibility (404) (D104). Value errors give `400 VALIDATION_FAILED` with `errors` naming `timezone`, `from` or `to`, with fixed rule texts and never the value (D99).
+  2. Then, in a read-only **REPEATABLE READ** template (D102), `loadVisible` runs (with the D74 404; a DEACTIVATED link is still visible to its owner and ADMIN, D105), followed by the per-day query. `totalClicks`, `lastAccessedAt` and `daily` therefore come from one snapshot.
+- **Parameters:**
+  - `timezone` is exactly `UTC` or an ID in the JDK's tzdb set (`ZoneRulesProvider.getAvailableZoneIds()`), case-sensitive. The default is `UTC` (D10). Offsets and prefixed offsets are rejected (D96).
+  - `from` and `to` are inclusive ISO dates in that zone, between 1970-01-01 and 9999-12-31 (D97). `to` defaults to today in the zone and `from` to `max(to − 29, 1970-01-01)`, each independently. The maximum is 366 days (D98).
+- **Response:** `{shortCode, timezone, from, to, totalClicks (click_count), clicksInRange, lastAccessedAt (UTC or null), daily: [{date, clicks}]}`. `daily` is dense (D19) and ascending (D101).
+- **Query:** see *Time zones for daily stats* below.
+
 ### Access rules in the filter chain — *implemented (US-005)*
 
 The rules below are evaluated top to bottom, and the first match wins. The exact configuration is in the US-005 Design note §3.
@@ -383,7 +407,7 @@ The rules below are evaluated top to bottom, and the first match wins. The exact
 | 3 | `GET /v3/api-docs`, `/v3/api-docs/**`, `/v3/api-docs.yaml`, `/swagger-ui.html`, `/swagger-ui/**` | public (springdoc 2.8.17 defaults) |
 | 4 | `/actuator`, `/actuator/**` | authenticated (keeps `/actuator` from matching rule 7) |
 | 5 | `DELETE /api/v1/urls/**` | `hasRole(ADMIN)` (D3). It covers trailing-slash and nested variants. 403 is returned before any handler or lookup (US-009 AC6, AC8). Admits the ADMIN soft delete (implemented (US-009)) |
-| 6 | `/api`, `/api/**` | `hasRole(USER)`; ADMIN passes through the `ADMIN > USER` hierarchy. Ownership (D4) is enforced in the service. It admits `POST /api/v1/urls` (US-006) and `GET`/`HEAD /api/v1/urls/{code}` (implemented (US-007)), and `PATCH /api/v1/urls/{code}` (implemented (US-009)) |
+| 6 | `/api`, `/api/**` | `hasRole(USER)`; ADMIN passes through the `ADMIN > USER` hierarchy. Ownership (D4) is enforced in the service. It admits `POST /api/v1/urls` (US-006) and `GET`/`HEAD /api/v1/urls/{code}` (implemented (US-007)), `PATCH /api/v1/urls/{code}` (implemented (US-009)), and `GET`/`HEAD /api/v1/urls/{code}/stats` (designed (US-011), design approved (G2)) |
 | 7 | `GET` and `HEAD /*` (any single segment) | public (D32). Not narrowed to the code regex: US-008 AC6 requires 404, not 401, for malformed codes. Admits the redirect `GET`/`HEAD /{code}` (implemented (US-008)). A trailing-slash variant `/{code}/` falls to rule 8 |
 | 8 | anything else | **`denyAll`** (D57): anonymous gets 401 through the entry point, authenticated gets 403 `ACCESS_DENIED`. Only explicitly listed paths can reach a handler, so case or path variants of a restricted prefix (for example `/API/...`) never fall through to a weaker rule |
 
@@ -409,7 +433,7 @@ Rule: no handler other than the redirect may be mapped to a single path segment,
   - Exhaustion after `shortener.code.max-attempts` gives `503 SHORT_CODE_UNAVAILABLE`, with no row committed.
 
 ### Analytics
-- **Recommendation:** atomic `UPDATE … SET click_count = click_count + 1, last_accessed_at = :now` plus an insert into `click_event`, behind a `ClickRecorder` interface. Daily stats are computed with `GROUP BY` in the caller's time zone.
+- **Recommendation:** atomic `UPDATE … SET click_count = click_count + 1, last_accessed_at = :now` plus an insert into `click_event`, behind a `ClickRecorder` interface. Daily stats are counted per local day of the caller's time zone, using day boundaries computed in Java (D95; see *Time zones for daily stats*).
 - **Reason:** exact counts, cheap total reads, no rollup table to keep consistent.
 - **Alternative:** a `daily_click_stats` upsert table, or asynchronous events via Kafka/SQS.
 - **Trade-off:** synchronous writes add latency to redirects and contend on the counter row for hot links. A production system would publish click events to a message broker and aggregate them asynchronously. Failures fail open (D12).
@@ -420,12 +444,28 @@ Rule: no handler other than the redirect may be mapped to a single path segment,
   - The atomicity unit is one `REQUIRES_NEW` transaction: a status-guarded counter UPDATE, then the event INSERT.
   - Concurrency: the atomic `+ 1` under READ COMMITTED loses no updates, and clicks on one link serialise on its row lock. A PATCH queued behind a click still matches `WHERE version = ?`, because clicks never bump `version`.
   - There is no lost-click metric until US-014: actuator exposes only `health`.
+- **Stats read** *(designed (US-011), design approved (G2))*:
+  - `totalClicks` is `short_url.click_count` (O(1), one writer), not `count(click_event)`. The two are equal by construction for application-written data.
+  - The daily series is computed per request from `click_event` over at most 366 days. Cost grows with a link's clicks in the window; rollups remain the production roadmap item above.
 
-### Time zones for daily stats
-- **Recommendation:** accept only IANA region IDs and `UTC`, validated in Java, then group in PostgreSQL with `AT TIME ZONE`.
-- **Reason:** handles DST correctly and keeps aggregation in the database.
-- **Alternative:** accept raw offsets, or group in Java.
-- **Trade-off:** PostgreSQL interprets POSIX-style offsets with an inverted sign, so offsets are rejected to prevent silently wrong results. Grouping in Java would load every click into memory.
+### Time zones for daily stats — *designed (US-011), design approved (G2); D95, D96*
+- **Recommendation (D95):** Java does all time-zone arithmetic. It validates the zone (D96), computes the start instant of every local day with `LocalDate.atStartOfDay(zone)`, and sends only instants to PostgreSQL. PostgreSQL counts the link's clicks with `width_bucket` over those day starts, as a range scan on `ix_click_event_short_url_id_clicked_at`. **No zone string is ever sent to PostgreSQL.** Java fills in the zero-click days (D19).
+- **Reason:** DST-correct (23-hour, 25-hour and skipped days), aggregation stays in the database so no click is loaded into memory, and a single zone implementation (the JDK's) decides every bucket.
+- **Alternative:** accept only IANA IDs and `UTC`, validated in Java, then group in PostgreSQL with `CAST(clicked_at AT TIME ZONE :zone AS date)`.
+- **Trade-off:** the query carries an array of day-start instants (at most 366, one per date in the window) instead of one zone name, and tz rule updates reach the stats only through JDK updates.
+- **Supersedes** the planning-stage recommendation to group with `AT TIME ZONE` in PostgreSQL (D95). Testing on PostgreSQL 18.6 showed that PostgreSQL resolves `CET` as a fixed +01 abbreviation, inverts the sign of `+05:00`, matches zone names case-insensitively, and uses its own tzdata, so the same zone string could give a different bucket, or an error, in PostgreSQL than in Java.
+- **Detail** (US-011 Design note):
+  - **Validation (D96):** `timezone` must be exactly `UTC` or an ID in `ZoneRulesProvider.getAvailableZoneIds()` (the JDK's IANA tzdb set), case-sensitive. That excludes `Z`, `+05:00`, `UTC+5` and `GMT-3`, which Java documents as not in the set.
+  - **Day starts:** Java computes `d.atStartOfDay(zone)` for every date in `[from, to]`, plus `start(to + 1)`. `atStartOfDay` returns the earliest valid time, so DST gaps are handled.
+  - **The query:** `SELECT width_bucket(clicked_at, CAST(string_to_array(:dayStarts, ',') AS timestamptz[])) AS day_index, count(*) … WHERE short_url_id = :shortUrlId AND clicked_at >= :rangeStart AND clicked_at < :rangeEnd GROUP BY day_index`. It is an index range scan on `ix_click_event_short_url_id_clicked_at` (index-only when the visibility map allows), and Java fills in the zero days.
+  - **Why not `AT TIME ZONE`:**
+    - PostgreSQL resolves a zone string abbreviation-first. In PG 18 it checks the session `TimeZone`'s abbreviations first, and pgjdbc sets the session `TimeZone` from the JVM default. So `'CET'` would be a fixed +01 with no DST.
+    - PostgreSQL reads POSIX specs with the inverted sign.
+    - It matches names case-insensitively.
+    - The Postgres image uses Alpine's system tzdata (`--with-system-tzdata`), which updates independently of the JDK's.
+    - With Java-only zone arithmetic, none of these can give a 500 or a silently different bucket.
+  - **Operational consequence:** tz rule changes reach the stats through JDK updates. `AT TIME ZONE` is the rejected alternative (kept in the US-011 Design note), which would have needed extra safeguards: slash-only IDs, SQLSTATE `22023` mapped to 400, and handling for residual rule skew.
+  - **Guard (D103):** a repository test runs `EXPLAIN` with `enable_seqscan` off and asserts the index is used; the pinned SQL literal contains no `AT TIME ZONE`, `timezone(` or zone parameter (D95).
 
 ### Security
 - **Recommendation:** Spring Security, HTTP Basic, stateless, users configured with BCrypt-hashed passwords from environment variables; roles `USER` and `ADMIN` (hierarchy `ADMIN > USER`).
@@ -480,6 +520,11 @@ RFC 7807 `ProblemDetail` responses with an `errorCode` extension, produced by a 
   - `ShortUrlConcurrentModificationException` → 409 `CONCURRENT_MODIFICATION`
 
   All three carry the base keys only, with fixed `detail` texts, and nothing is logged by the advice. The advice has no handler for Spring's `OptimisticLockingFailureException`: the service translates it, as create translates `DataIntegrityViolationException`.
+- *Designed (US-011), design approved (G2); D99, D100:*
+  - `InvalidStatsQueryException` → 400 `VALIDATION_FAILED`, with `errors` (`timezone`, `from`, `to`) and the detail "The query parameters failed validation."
+  - Unknown or repeated query parameters on the stats endpoint are thrown as `ServletRequestBindingException`, so the existing fallback gives 400 `MALFORMED_REQUEST` with no new handler.
+  - This settles D69 for US-011: value errors are `VALIDATION_FAILED`, and any framework-level conversion error keeps the `MALFORMED_REQUEST` fallback (none can occur on stats, which binds raw `String`s).
+  - `PostgresServerErrors.sqlState` falls back to the first non-blank `SQLException.getSQLState()` when there is no server message (US-010 R4), for example `08006` on a lost connection. `isUniqueViolation` still reads the server message only.
   - *Implemented (US-008):* the redirect throws the same exception for malformed, unknown, `DEACTIVATED` (D2) and `DELETED` codes. The handler is unchanged.
 - **Field-level extension (D56):** `errors`, an array of `{field, message}` sorted by field, used only on `VALIDATION_FAILED`, `INVALID_URL` and `INVALID_ALIAS`. It never contains the rejected value.
 - **Shape parity:** advice bodies are serialized by Spring MVC with the context `ObjectMapper`, the same one the security writer uses. So `errorCode` is top-level on both paths, and 401/403 carry the base keys only.

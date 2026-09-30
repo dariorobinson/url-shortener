@@ -2,11 +2,16 @@ package com.schwab.urlshortener.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Method;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
@@ -20,6 +25,7 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.Repository;
+import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -31,7 +37,14 @@ import org.springframework.transaction.annotation.Transactional;
 class RepositoryAnnotationsTest {
 
     private static final String EXPECTED_CLICK_SQL = "UPDATE short_url SET click_count = click_count + 1,"
-            + " last_accessed_at = :clickedAt WHERE id = :id AND status = 'ACTIVE'";
+            + " last_accessed_at = GREATEST(last_accessed_at, :clickedAt) WHERE id = :id AND status = 'ACTIVE'";
+
+    /** D95, D103: the stats SQL, pinned. No zone string, no AT TIME ZONE: PostgreSQL only counts. */
+    private static final String EXPECTED_STATS_SQL = "SELECT width_bucket(clicked_at,"
+            + " CAST(string_to_array(:dayStarts, ',') AS timestamptz[])) AS day_index,"
+            + " count(*) AS clicks FROM click_event"
+            + " WHERE short_url_id = :shortUrlId AND clicked_at >= :rangeStart AND clicked_at < :rangeEnd"
+            + " GROUP BY day_index ORDER BY day_index";
 
     private static List<Class<?>> repositoryInterfaces() {
         ClassPathScanningCandidateComponentProvider scanner = new ClassPathScanningCandidateComponentProvider(false) {
@@ -84,6 +97,80 @@ class RepositoryAnnotationsTest {
     }
 
     @Test
+    void shouldDeclareTheStatsQueryExactlyAsApprovedWithNoZoneParameter() throws Exception {
+        Method rows = ClickEventRepository.class.getDeclaredMethod("countClicksPerDayRows", long.class, Instant.class,
+                Instant.class, String.class);
+
+        assertThat(rows.getReturnType()).isEqualTo(List.class);
+        Query query = rows.getAnnotation(Query.class);
+        assertThat(query).isNotNull();
+        assertThat(query.nativeQuery()).isTrue();
+        assertThat(query.value()).isEqualTo(EXPECTED_STATS_SQL);
+        assertThat(ClickEventRepository.CLICKS_PER_DAY_SQL).isEqualTo(EXPECTED_STATS_SQL);
+        assertThat(MergedAnnotations.from(rows, SearchStrategy.TYPE_HIERARCHY).isPresent(Modifying.class)).isFalse();
+        assertThat(rows.getParameters()).extracting(p -> p.getAnnotation(Param.class).value())
+                .containsExactly("shortUrlId", "rangeStart", "rangeEnd", "dayStarts");
+    }
+
+    @Test
+    void shouldKeepAnyTimeZoneConversionOutOfEveryRepositorySql() {
+        String statsSql = ClickEventRepository.CLICKS_PER_DAY_SQL.toLowerCase(Locale.ROOT);
+        String clickSql = ShortUrlRepository.RECORD_CLICK_SQL.toLowerCase(Locale.ROOT);
+
+        assertThat(statsSql).doesNotContain("at time zone").doesNotContain("timezone(").doesNotContain(":zone")
+                .doesNotContain(":timezone").doesNotContain("::");
+        assertThat(clickSql).doesNotContain("at time zone").doesNotContain("timezone(");
+        // Positive control for the detector: the lower-casing and the substring checks do see these tokens.
+        assertThat("SELECT x AT TIME ZONE :zone".toLowerCase(Locale.ROOT)).contains("at time zone").contains(":zone");
+        // The stats predicate compares the bare column (sargable, D103).
+        assertThat(statsSql).contains("clicked_at >= :rangestart and clicked_at < :rangeend");
+    }
+
+    /**
+     * The detector behind the no-{@code @Transactional} guard below must see a direct, a composed and a Jakarta
+     * annotation, or that guard would pass vacuously (the service owns its transactions, D102).
+     */
+    @Test
+    void shouldDetectDirectAndComposedTransactionalAnnotations() throws Exception {
+        Method direct = DirectlyAnnotated.class.getDeclaredMethod("save");
+        Method composed = ComposedAnnotated.class.getDeclaredMethod("save");
+        Method jakarta = JakartaAnnotated.class.getDeclaredMethod("save");
+        Method plain = PlainSample.class.getDeclaredMethod("save");
+
+        assertThat(isTransactional(direct)).isTrue();
+        assertThat(isTransactional(composed)).isTrue();
+        assertThat(isTransactional(jakarta)).isTrue();
+        assertThat(isTransactional(DirectlyAnnotated.class)).isFalse();
+        assertThat(isTransactional(plain)).isFalse();
+        assertThat(isTransactional(PlainSample.class)).isFalse();
+    }
+
+    @Target(ElementType.METHOD)
+    @Retention(RetentionPolicy.RUNTIME)
+    @Transactional
+    @interface ComposedTransactional {
+    }
+
+    interface DirectlyAnnotated {
+        @Transactional
+        void save();
+    }
+
+    interface ComposedAnnotated {
+        @ComposedTransactional
+        void save();
+    }
+
+    interface JakartaAnnotated {
+        @jakarta.transaction.Transactional
+        void save();
+    }
+
+    interface PlainSample {
+        void save();
+    }
+
+    @Test
     void shouldCarryNoTransactionalAnnotationOnAnyRepositoryInterfaceOrDeclaredMethod() {
         List<Class<?>> repositories = repositoryInterfaces();
         assertThat(repositories).hasSize(2);
@@ -101,8 +188,8 @@ class RepositoryAnnotationsTest {
             }
         }
 
-        assertThat(methodsInspected).as("non-vacuous: recordClick and findByShortCode were inspected")
-                .isGreaterThanOrEqualTo(2);
+        assertThat(methodsInspected).as("non-vacuous: recordClick, findByShortCode and the stats methods")
+                .isGreaterThanOrEqualTo(4);
         assertThat(offenders).isEmpty();
     }
 

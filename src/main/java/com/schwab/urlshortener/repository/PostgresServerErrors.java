@@ -1,5 +1,6 @@
 package com.schwab.urlshortener.repository;
 
+import java.sql.SQLException;
 import java.util.Objects;
 import java.util.Optional;
 import org.postgresql.util.PSQLException;
@@ -37,11 +38,23 @@ public final class PostgresServerErrors {
     }
 
     /**
-     * @return the SQLSTATE of the first {@link PSQLException} in the cause chain, or empty if there is none or it
-     *         carries no server message
+     * @return the SQLSTATE of the server error (first {@link PSQLException} with a server message), else the first
+     *         non-blank {@link SQLException#getSQLState()} in the cause chain (client-side states such as
+     *         {@code 08006}), else empty. {@link #serverError} and {@link #isUniqueViolation} stay server-message-only,
+     *         so a client-side {@code 23505} is never a "code taken" collision.
      */
     public static Optional<String> sqlState(Throwable t) {
-        return serverError(t).map(ServerErrorMessage::getSQLState);
+        Optional<String> server = serverError(t).map(ServerErrorMessage::getSQLState);
+        if (server.isPresent()) {
+            return server;
+        }
+        Throwable current = t;
+        for (int depth = 0; current != null && depth < MAX_CAUSE_DEPTH; depth++, current = current.getCause()) {
+            if (current instanceof SQLException sql && sql.getSQLState() != null && !sql.getSQLState().isBlank()) {
+                return Optional.of(sql.getSQLState());
+            }
+        }
+        return Optional.empty();
     }
 
     /**

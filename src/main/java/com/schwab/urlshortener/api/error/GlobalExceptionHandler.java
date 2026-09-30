@@ -5,6 +5,7 @@ import com.schwab.urlshortener.domain.exception.ShortUrlAlreadyDeactivatedExcept
 import com.schwab.urlshortener.domain.exception.ShortUrlDeletedException;
 import com.schwab.urlshortener.service.exception.AliasAlreadyExistsException;
 import com.schwab.urlshortener.service.exception.InvalidAliasException;
+import com.schwab.urlshortener.service.exception.InvalidStatsQueryException;
 import com.schwab.urlshortener.service.exception.InvalidUrlException;
 import com.schwab.urlshortener.service.exception.ShortCodeUnavailableException;
 import com.schwab.urlshortener.service.exception.ShortUrlConcurrentModificationException;
@@ -52,6 +53,9 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     static final String ALIAS_RULE = "must be " + SecureRandomShortCodeGenerator.MIN_LENGTH + " to "
             + SecureRandomShortCodeGenerator.MAX_LENGTH + " characters from A-Z, a-z and 0-9, and not a reserved word";
+
+    /** D99: the VALIDATION_FAILED text for query parameters; the map's text says "request body" and stays pinned. */
+    static final String QUERY_VALIDATION_DETAIL = "The query parameters failed validation.";
 
     private static final Map<ErrorCode, String> DETAIL = detailTexts();
 
@@ -139,6 +143,20 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     ResponseEntity<ProblemDetail> handleInvalidAlias(HttpServletRequest request) {
         return respond(ProblemDetails.of(ErrorCode.INVALID_ALIAS, DETAIL.get(ErrorCode.INVALID_ALIAS),
                 request.getRequestURI(), List.of(new FieldViolation("alias", ALIAS_RULE))));
+    }
+
+    /**
+     * D99: parameter errors carry only a fixed parameter name and rule text, never the submitted value. Nothing is
+     * logged here; the service logged at DEBUG.
+     */
+    @ExceptionHandler(InvalidStatsQueryException.class)
+    ResponseEntity<ProblemDetail> handleInvalidStatsQuery(InvalidStatsQueryException ex, HttpServletRequest request) {
+        List<FieldViolation> violations = ex.violations().stream()
+                .map(v -> new FieldViolation(v.parameter().wireName(), v.rule()))
+                .sorted(Comparator.comparing(FieldViolation::field).thenComparing(FieldViolation::message))
+                .toList();
+        return respond(ProblemDetails.of(ErrorCode.VALIDATION_FAILED, QUERY_VALIDATION_DETAIL,
+                request.getRequestURI(), violations));
     }
 
     @ExceptionHandler(AliasAlreadyExistsException.class)

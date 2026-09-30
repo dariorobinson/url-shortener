@@ -2,13 +2,15 @@ package com.schwab.urlshortener.support;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
- * Arranges and inspects {@code short_url} and {@code click_event} rows for integration tests when the API cannot express
- * it (seeding colliding rows, counting rows by marker). Rows seeded here are owned by
+ * Arranges and inspects {@code short_url} and {@code click_event} rows for integration tests when the API cannot
+ * express it (seeding colliding rows, counting rows by marker). Rows seeded here are owned by
  * {@value #SEED_OWNER}. Not a Spring bean: construct it with the context's {@link JdbcTemplate}.
  */
 public final class ShortUrlTestData {
@@ -87,6 +89,28 @@ public final class ShortUrlTestData {
         if (updated != 1) {
             throw new IllegalStateException("expected exactly one row to seed clicks on");
         }
+    }
+
+    /**
+     * Inserts one click_event row per instant with an explicit clicked_at, then applies the recorder's effect to the
+     * short_url row: click_count += n and last_accessed_at = GREATEST(last_accessed_at, latest) (D94), so the
+     * fixtures look like application-written data. Instants are bound as UTC {@link OffsetDateTime}, never
+     * {@link Timestamp}, so the fall-back hour cannot depend on the JVM default zone.
+     */
+    public void seedClickEvents(String code, Instant... clickedAt) {
+        if (clickedAt.length == 0) {
+            throw new IllegalArgumentException("at least one click");
+        }
+        long id = shortUrlId(code);
+        Instant latest = clickedAt[0];
+        for (Instant at : clickedAt) {
+            jdbc.update("INSERT INTO click_event (short_url_id, clicked_at) VALUES (?, ?)", id,
+                    OffsetDateTime.ofInstant(at, ZoneOffset.UTC));
+            latest = at.isAfter(latest) ? at : latest;
+        }
+        jdbc.update("UPDATE short_url SET click_count = click_count + ?,"
+                + " last_accessed_at = GREATEST(last_accessed_at, ?) WHERE id = ?", clickedAt.length,
+                OffsetDateTime.ofInstant(latest, ZoneOffset.UTC), id);
     }
 
     /**

@@ -832,7 +832,7 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
 - **Engineer decision:** "approve all" (relayed). **Accepted:** commit C5a exactly as staged. **Committed as `2ef7a20`** (parent `a94d41c`, 37 files). The main session verifies and pushes (engineer-approved).
 - **Independent verification by the main session, before approval:** re-verified the staging (37 files, nothing unstaged, no forbidden files, HEAD `a94d41c`).
 - **Validation:** the working tree was clean after the commit.
-- **Rationale:** *(engineer to add)*
+- **Push (main session, engineer-approved):** the main session verified `1a9fef5` (parent `e14f590`, 49 files, no forbidden files, trailer present) and pushed it. `origin/main` is now `1a9fef5`.
 - **Rationale:** *(engineer to add)*
 - **Validation:** the orchestrator ran `./mvnw -q clean verify`: exit 0, Surefire 702/0 and Failsafe 454/0 (run/failed), including 130 Cucumber scenarios, merged LINE coverage 449/451. There is 1 intentional `HeadersTooLargeException` in the log, with no URL text.
 - **Session interruption:** the previous orchestrator run ended with an API billing error ("Credit balance is too low") after C5a was staged and before the G4 checkpoint was shown. The engineer resolved it and resumed the orchestrator with "A". That meant resume only; it was not approval of C5a. The main session had checked the state: 37 files staged, nothing unstaged, no forbidden files, and a rebuild of the staged state gave exit 0, Surefire 702/0, Failsafe 454/0. HEAD was still `a94d41c`. The orchestrator re-checked (HEAD `a94d41c`, 37 staged, nothing unstaged) and presented G4 without redoing any work.
@@ -1013,7 +1013,76 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
 
 - **Date:** 2026-09-30
 - **Task:** Commit C6a: US-010, its docs (D91–D94, the US-007/US-008 post-completion notes, the US-011 and US-014 carry-overs), and the four `CLAUDE.md` review rules from US-010.
-- **Engineer decision:** *(pending G4; not pre-approved)*
-- **Rationale:** *(engineer to add)*
+- **Engineer decision:** "approve all." (relayed). **Accepted:** commit C6a exactly as staged. **Committed as `1a9fef5`** (parent `e14f590`, 49 files). The main session verifies and pushes (engineer-approved). The AC1 rewording lands in US-011 with the D94 code change: **Accepted**.
+- **Independent verification by the main session, before approval:** it re-checked the staging: 49 files, nothing unstaged, no forbidden files, 4 new `CLAUDE.md` rules, HEAD `e14f590`.
+- **Validation:** the working tree was clean after the commit.
+- **Push (main session, engineer-approved):** the main session verified `1a9fef5` (parent `e14f590`, 49 files, no forbidden files, trailer present) and pushed it. `origin/main` is now `1a9fef5`.
 - **Rationale:** *(engineer to add)*
 - **Validation:** the orchestrator ran `./mvnw -q clean verify`: exit 0, Surefire 881/0, Failsafe 641/0 (run/failed), including 176 Cucumber scenarios, merged LINE coverage 529/531. The log contains no trigger text, no URL token and no "Failing row contains".
+
+## Entry 31 — US-011 statistics API (design)
+
+- **Date:** 2026-09-30
+- **Task:** Architect design note for US-011. The story requires design approval, so it stops at G2.
+- **Inputs:**
+  - D10: IANA region IDs plus `UTC` only; offsets are rejected.
+  - D19: zero-click days are included.
+  - Daily buckets must be correct across DST, using the index, with the query cost bounded.
+  - Ownership through `loadVisible`.
+  - Open questions: `from`/`to` defaults, format and inclusivity, and the maximum range; the response shape; the D69 mapping; `VALIDATION_FAILED` vs `INVALID_TIMEZONE`.
+  - Carry-overs: R4, D94 and N1/N2/N4/N5.
+  - The `SecurityConfig` rule that admits the endpoint.
+  - It inherits the D70 `produces`.
+- **AI recommendation (architect):**
+  - **Endpoint:** `GET`/`HEAD /api/v1/urls/{code}/stats`. It is admitted by rule 6, inherits `produces` (D70), reuses `loadVisible`, and uses a read-only REPEATABLE READ template with no `@Transactional`.
+  - **S-1:** a departure from the architecture's `AT TIME ZONE` recommendation. All zone arithmetic happens in Java (`atStartOfDay(zone)` gives each local day's start). One native query then counts clicks per day with `width_bucket` over the Java-computed day-start instants, using the V2 index. Java fills in the zero days, and no zone string is ever sent to PostgreSQL.
+  - **S-2:** `timezone` is `UTC` or a JDK IANA ID, case-sensitive. Offsets, prefixed offsets, `UT` and three-letter IDs are rejected.
+  - **S-3/S-4:** inclusive local-date `from`/`to`; the default is the last 30 days; at most 366 days; dates between 1970 and 9999.
+  - **S-5/S-6/S-7:** `VALIDATION_FAILED` with `errors`; unknown or repeated query parameters get `MALFORMED_REQUEST`; no `INVALID_TIMEZONE` code.
+  - **S-8:** the response shape.
+  - **S-10:** REPEATABLE READ.
+  - **S-11:** an EXPLAIN test.
+  - **S-12:** 400 is returned before 404.
+- **Orchestrator validation of S-1's premise, on a throwaway `postgres:18.6-alpine` container:**
+  - `AT TIME ZONE 'CET'` at 2026-07-01 12:00Z gives 13:00, a fixed +01 with no DST. Java's `CET` has DST.
+  - `'+05:00'` gives 07:00: the POSIX sign inversion.
+  - `'america/new_york'` is accepted case-insensitively.
+  - This confirms the architect's source reading that PostgreSQL's zone parsing differs from Java's in ways `AT TIME ZONE` would expose.
+- **Engineer decisions requested:** Q1–Q11. Q1 is S-1 versus `AT TIME ZONE`; if S-1 is chosen, the story's IT row, its Risk and the architecture's original recommendation are reworded.
+- **Engineer decision:** "approve all" (relayed). **Accepted:** every recommendation, Q1–Q11, including S-1. The rest of the design note (S-2 to S-13, the test plan and the carry-overs) is approved as written.
+  - Recorded as **D95–D105**: D95 day bucketing in Java with `width_bucket`, no zone ever sent to PostgreSQL, zero-fill in Java (supersedes the planning-stage `AT TIME ZONE` recommendation); D96 accepted zone strings; D97 inclusive local-date `from`/`to`; D98 defaults and limits; D99 `VALIDATION_FAILED`, no `INVALID_TIMEZONE`; D100 unknown or repeated parameters get `MALFORMED_REQUEST`; D101 response shape; D102 REPEATABLE READ; D103 EXPLAIN test; D104 400 before 404; D105 stats for DEACTIVATED links.
+  - The planner rewords US-011's IT row and Risk, and the architect updates the architecture's time-zone recommendation.
+  - Guardrails relayed with the decision: no `AT TIME ZONE` or `timezone(...)` in `src/main` (the reviewer confirms); `+` sent as `%2B` in tests; DST-hour fixtures bound as UTC `OffsetDateTime`; "today" from `LocalDate.ofInstant(clock.instant(), zone)`; DST tests cover a 23-hour day, a 25-hour day and a gap day in at least two zones, one southern-hemisphere; the EXPLAIN test confirms index use; parameter validation before any database work; every Done-story test change listed test by test. C6b is **not** pre-approved.
+- **Independent verification by the main session:** it reproduced the orchestrator's PostgreSQL findings on its own throwaway `postgres:18.6-alpine` container (session zone Europe/Berlin, 2026-07-01 12:00Z): `AT TIME ZONE 'CET'` gives 13:00 (fixed +01, no DST); `'+05:00'` gives 07:00 (sign inverted); `'america/new_york'` is accepted and gives 08:00.
+- **Process-validation finding:** an assumption in the main session's own planning-stage architecture (grouping by day with `AT TIME ZONE` in PostgreSQL) was overturned by empirical testing before any implementation. The design gate caught it at the cost of a design note, not a defect.
+- **Rationale:** *(engineer to add)*
+- **Validation:** the architect cited the Java 25 API, PostgreSQL 18 docs and `REL_18_STABLE` `datetime.c`, pgjdbc 42.7.11, the postgres Alpine Dockerfile, Spring 6.2 and spring-orm 6.2.19. The orchestrator confirmed that only the US-011 Design note and `architecture.md` changed.
+
+## Entry 32 — US-011 statistics API (implementation, review, G3)
+
+- **Date:** 2026-09-30
+- **Task:** Implement US-011 per the approved design (D95–D105) plus the US-010 carry-overs (R4, D94, N1, N2, N4, N5).
+- **Doc steps after G2:** the orchestrator recorded D95–D105 in `requirements.md` (D98 includes the approved 1970-01-01 clamp on the default `from`). The planner reworded the story above the Design note (IT row, Risk, AC3, AC8, new AC9–AC16, open questions resolved). The architect updated `architecture.md`'s time-zone recommendation to D95 and marked the design note approved. The orchestrator annotated US-010's index note as superseded by D95.
+- **AI work:**
+  - **mid-engineer:** the endpoint, `StatsPeriod`, the `width_bucket` query with day starts sent as a UTC ISO-8601 CSV cast to `timestamptz[]`, Java densify, the REPEATABLE READ template, R4, D94 `GREATEST`, N4; 1052 Surefire tests including the D103 EXPLAIN test with a negative control.
+  - **qa-tester:** `StatsIT` (155), 64 stats Cucumber scenarios, OpenAPI checks, a black-box REPEATABLE READ proof, the D94 backwards-clock test, N1/N2/N5. No production defects. Two notes: the design note wrongly listed `EST` as accepted; request lines over Tomcat's 8 KiB limit get a bare `text/html` 400.
+- **Senior review:**
+  - **Round 1: CHANGES_REQUIRED.** R1 BLOCKING (Done-story test edits not listed); R2 SHOULD (`N4` label cited in a test); R3 SHOULD (free-form parameter name in the no-echo error type → enum); R4–R13 NITs; R14 design-note `EST` row. All 8 relayed guardrails confirmed except the Done-story listing.
+  - **Fix round 1:** mid-engineer R1 (also found unlisted `GlobalExceptionHandlerTest` edits, US-006), R2, R3 (`StatsParameter` enum), R4–R9; qa-tester R1, R10–R13; architect R14 (EST/MST/HST moved to the rejected row, with an erratum; checked against the OpenJDK tzdb build tool). The orchestrator confirmed on JDK 25.0.2 that `GMT`, `UTC`, `Etc/GMT+5` and `EST5EDT` are in the zone set and `EST`, `MST`, `HST`, `UT` and `Z` are not.
+  - **Round 2: CHANGES_REQUIRED.** R15 BLOCKING (listings in US-007/US-008 named wrong or non-existent tests); R16/R17 SHOULD (stale notes and counts); R18–R20 NITs.
+  - **Fix round 2** (the second and last allowed): qa-tester R15, R17, R19, R20; mid-engineer R16, R18.
+  - **Round 3: APPROVE.** NITs R21 (wording "round 1" → "round 2") and R22 (US-009 pointer for a touched US-009 test) were applied by the orchestrator as doc-only edits.
+  - **Proposed CLAUDE.md rules (round 1 and 3, for the engineer):** review-finding labels (`Rn`, `Nn`) are never cited in code, tests or SQL; every Done-story test edit is listed by exact method name in the owning story (with pointers from other affected stories); tests relying on a session setting assert it with `SHOW` first; no-echo error types name fields with an enum; build counts in story notes state the review round.
+- **Engineer decision:** "approve all" (G3). **Accepted:** US-011 is `Done`; the five proposed review rules are added to `CLAUDE.md`; the 8 KiB request-line 400 (and the busy-link stats cost) are carried into US-014; D96 now records that `EST`, `MST` and `HST` are rejected; the architect's "or an error" wording is kept; US-011 is committed alone as C6b and pushed.
+- **Rationale:** *(engineer to add)*
+- **Independent verification by the main session:** re-ran `./mvnw -q clean verify` (exit 0, Surefire 1052/0, Failsafe 866/0); `grep` finds no `AT TIME ZONE` or `timezone(` in `src/main`; read `CLICKS_PER_DAY_SQL` (day starts sent as UTC ISO-8601 with explicit `Z`, so the session time zone cannot affect bucketing) and the D94 `GREATEST` click UPDATE.
+- **Validation:** the orchestrator ran `./mvnw -q clean verify`: exit 0, Surefire 1052/0, Failsafe 866/0 (run/failed; CucumberIT 240, StatsIT 155), 0 skipped, merged LINE coverage 650/653, 0 "Failing row contains". `grep -rniE "at time zone|timezone\(" src/main` returns only the enum constant `TIMEZONE(StatsParameter.TIMEZONE_NAME)`; no SQL converts zones.
+
+## Entry 33 — Workflow change: no agents from US-012 onward
+
+- **Date:** 2026-09-30
+- **Engineer direction:** "lets not use agentic workflow for these next 4 stories since implementation is already done. DO NOT use agents for this prompt going forward. Address US-012 - US-015 yourself."
+- **Change:** from US-012 the main session (Claude Code) does analysis, implementation, testing and documentation directly, without the orchestrator or subagents. `CLAUDE.md`'s workflow and Git sections are updated to say so. The approval gates, recommendation format, tests, post-task reports and this log are unchanged.
+- **AI observation raised with the engineer:** US-012–US-015 contain no story that *implements* expiration (US-012 asks questions, US-013 plans, US-014 hardens, US-015 documents), yet FR-4/FR-9 and Scenario 2 require the enhancement to be introduced. The main session recommended adding **US-016 (implement expiration)** after US-013.
+- **Engineer decision:** **Accepted** ("yes") — US-016 is added, to be created once US-013 is approved.
+- **Commit C6b** (US-011) is made by the main session after the engineer's approval, consistent with the updated Git rule.

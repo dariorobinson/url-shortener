@@ -24,7 +24,7 @@ See [requirements.md](requirements.md). The ambiguous requirements were resolved
 | 6 | Create/read API and error handling | Done (US-006 create, US-007 read) |
 | 7 | Redirect | Done (US-008) |
 | 8 | Deactivate/reactivate and soft delete | Done (US-009) |
-| 9 | Analytics | Click recording done (US-010); stats are US-011 |
+| 9 | Analytics | Click recording done (US-010); stats done (US-011) |
 
 ### Architecture decisions
 See [architecture.md](architecture.md).
@@ -136,6 +136,12 @@ See [architecture.md](architecture.md).
     - 9 Cucumber scenarios.
   - **Review:** APPROVE in both rounds. R4 (SQLSTATE fallback) and R9 (monotonic `last_accessed_at`) went to the engineer.
   - **Validation:** the orchestrator ran `./mvnw -q clean verify` (1522 tests, 0 failures, LINE coverage 99.62%).
+- **US-011 (Task 9, statistics API):**
+  - **Design:** approved at G2 (D95–D105). Empirical testing on PostgreSQL 18.6 overturned the planning-stage recommendation to bucket days with `AT TIME ZONE` (PostgreSQL treats `CET` as a fixed abbreviation, inverts `+05:00` and matches names case-insensitively). Instead Java computes each local day's start instant and PostgreSQL counts with `width_bucket`; no zone string is sent to PostgreSQL (D95).
+  - **Implementation:** `GET`/`HEAD /api/v1/urls/{code}/stats` with `timezone`, `from`, `to`; `StatsPeriod` validates and resolves the window before any database work (D104); a read-only REPEATABLE READ snapshot (D102); a `StatsParameter` enum so errors can never echo input (D99). Carry-overs: SQLSTATE fallback (R4) and `GREATEST` for `last_accessed_at` (D94).
+  - **QA:** `StatsIT` (155 tests, including DST 23-hour, 25-hour and gap days in New York, Sydney, Sao Paulo and Apia, every JDK tzdb ID over HTTP, and a black-box REPEATABLE READ proof on a pooled connection) and 64 stats Cucumber scenarios.
+  - **Review:** CHANGES_REQUIRED in rounds 1 and 2 (Done-story test listings not exact, a free-form parameter name replaced by an enum, stale notes); APPROVE in round 3.
+  - **Validation:** the orchestrator ran `./mvnw -q clean verify` (Surefire 1052, Failsafe 866, 0 failures; LINE coverage 650/653).
 
 ---
 

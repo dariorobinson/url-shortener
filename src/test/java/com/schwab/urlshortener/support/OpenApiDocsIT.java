@@ -28,6 +28,7 @@ class OpenApiDocsIT extends IntegrationTestBase {
     private static final String CREATE_PATH = "/api/v1/urls";
     private static final String GET_PATH = "/api/v1/urls/{code}";
     private static final String REDIRECT_PATH = "/{code}";
+    private static final String STATS_PATH = "/api/v1/urls/{code}/stats";
 
     @Autowired
     private TestRestTemplate restTemplate;
@@ -352,5 +353,97 @@ class OpenApiDocsIT extends IntegrationTestBase {
         assertThat(description).contains("ACCESS_DENIED").contains("ALIAS_ALREADY_EXISTS");
         assertThat(patchOne.path("description").asText()).contains("CONCURRENT_MODIFICATION")
                 .contains("SHORT_URL_NOT_FOUND");
+    }
+
+    // ---- US-011: GET /api/v1/urls/{code}/stats ----
+
+    private JsonNode stats() {
+        return docs.path("paths").path(STATS_PATH).path("get");
+    }
+
+    private JsonNode statsParameter(String name) {
+        for (JsonNode parameter : stats().path("parameters")) {
+            if (name.equals(parameter.path("name").asText())) {
+                return parameter;
+            }
+        }
+        return objectMapper.missingNode();
+    }
+
+    @Test
+    void shouldDocumentOnlyGetOnTheStatsPathWithExactlyTheFourDeclaredParameters() {
+        assertThat(names(docs.path("paths").path(STATS_PATH))).containsExactly("get");
+        List<String> parameters = new ArrayList<>();
+        stats().path("parameters").forEach(p -> parameters.add(p.path("in").asText() + ":" + p.path("name").asText()));
+        // No "query" map parameter leaks from the hidden MultiValueMap, and no authentication parameter either.
+        assertThat(parameters).containsExactlyInAnyOrder("path:code", "query:timezone", "query:from", "query:to");
+        assertThat(statsParameter("code").path("required").asBoolean()).isTrue();
+        for (String optional : List.of("timezone", "from", "to")) {
+            assertThat(statsParameter(optional).path("required").asBoolean()).as(optional).isFalse();
+        }
+    }
+
+    @Test
+    void shouldDocumentTheTimezoneRuleTheSignWarningAndThePlusEncoding() {
+        JsonNode timezone = statsParameter("timezone");
+        String description = timezone.path("description").asText();
+
+        assertThat(timezone.path("schema").path("default").asText()).isEqualTo("UTC");
+        assertThat(timezone.path("schema").path("type").asText()).isEqualTo("string");
+        assertThat(description).contains("IANA").contains("case-sensitive").contains("+05:00").contains("UTC+5");
+        // D96: Etc/GMT+5 is five hours BEHIND UTC, which the name does not suggest.
+        assertThat(description).contains("Etc/GMT+5").contains("BEHIND UTC").contains("UTC-5");
+        assertThat(description).contains("%2B");
+    }
+
+    @Test
+    void shouldDocumentFromAndToAsOptionalDatesWithTheirDefaultsAndLimits() {
+        for (String name : List.of("from", "to")) {
+            JsonNode parameter = statsParameter(name);
+            assertThat(parameter.path("schema").path("type").asText()).as(name).isEqualTo("string");
+            assertThat(parameter.path("schema").path("format").asText()).as(name).isEqualTo("date");
+            assertThat(parameter.path("description").asText()).as(name).contains("inclusive")
+                    .contains("1970-01-01").contains("9999-12-31");
+        }
+        assertThat(statsParameter("from").path("description").asText()).contains("29 days before").contains("366");
+        assertThat(statsParameter("to").path("description").asText()).contains("today");
+    }
+
+    @Test
+    void shouldDocumentTheStatsResponsesAsExactlyTheFiveExpectedStatuses() {
+        assertThat(names(stats().path("responses"))).containsExactlyInAnyOrder("200", "400", "401", "404", "406");
+        for (String status : List.of("400", "401", "404", "406")) {
+            JsonNode response = stats().path("responses").path(status);
+            assertThat(names(response.path("content"))).as("media types of %s", status)
+                    .containsExactly("application/problem+json");
+            assertThat(response.path("content").path("application/problem+json").path("schema").path("$ref").asText())
+                    .as("schema of %s", status).endsWith("/Problem");
+        }
+        assertThat(stats().path("responses").path("400").path("description").asText())
+                .contains("VALIDATION_FAILED").contains("MALFORMED_REQUEST");
+        assertThat(stats().path("responses").path("404").path("description").asText())
+                .contains("SHORT_URL_NOT_FOUND");
+    }
+
+    @Test
+    void shouldDocumentTheStats200AsJsonOnlyWithTheD101FieldsAndTheDailyEntryShape() {
+        JsonNode ok = stats().path("responses").path("200");
+        assertThat(names(ok.path("content"))).containsExactly("application/json");
+        JsonNode schema = resolve(ok.path("content").path("application/json").path("schema"));
+
+        assertThat(names(schema.path("properties"))).containsExactlyInAnyOrder("shortCode", "timezone", "from", "to",
+                "totalClicks", "clicksInRange", "lastAccessedAt", "daily");
+        JsonNode daily = schema.path("properties").path("daily");
+        assertThat(daily.path("type").asText()).isEqualTo("array");
+        assertThat(names(resolve(daily.path("items")).path("properties"))).containsExactlyInAnyOrder("date", "clicks");
+    }
+
+    @Test
+    void shouldApplyBasicAuthenticationAndDescribeLocalDaysAndTheUtcLastAccess() {
+        assertThat(stats().path("security").toString()).contains("basicAuth");
+        String description = stats().path("description").asText();
+
+        assertThat(description).contains("23 or 25 hours").contains("UTC instant").contains("DEACTIVATED")
+                .contains("SHORT_URL_NOT_FOUND").contains("MALFORMED_REQUEST");
     }
 }

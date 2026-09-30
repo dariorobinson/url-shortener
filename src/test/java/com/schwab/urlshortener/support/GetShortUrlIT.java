@@ -90,8 +90,8 @@ class GetShortUrlIT extends IntegrationTestBase {
         return n == null ? 0 : n;
     }
 
-    /** Headers except Date, keyed case-insensitively, for equality across responses. */
-    private static Map<String, List<String>> stableHeaders(HttpResponse<String> response) {
+    /** Headers except Date (unlike ApiClient.stableHeaders, Content-Length is kept), keyed case-insensitively. */
+    private static Map<String, List<String>> headersExceptDate(HttpResponse<String> response) {
         Map<String, List<String>> headers = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         response.headers().map().forEach((name, values) -> {
             if (!"date".equalsIgnoreCase(name)) {
@@ -170,7 +170,7 @@ class GetShortUrlIT extends IntegrationTestBase {
         for (HttpResponse<String> response : List.of(absent, foreign, deletedForOwner, deletedForAdmin)) {
             assertNotFound(response, code);
             assertThat(response.body()).isEqualTo(absent.body());
-            assertThat(stableHeaders(response)).isEqualTo(stableHeaders(absent));
+            assertThat(headersExceptDate(response)).isEqualTo(headersExceptDate(absent));
             assertThat(response.headers().firstValue("Allow")).isEmpty();
             assertThat(response.headers().firstValue("WWW-Authenticate")).isEmpty();
         }
@@ -189,7 +189,7 @@ class GetShortUrlIT extends IntegrationTestBase {
         expected.remove("instance");
         actual.remove("instance");
         assertThat(actual).isEqualTo(expected);
-        assertThat(stableHeaders(response).keySet()).isEqualTo(stableHeaders(reference).keySet());
+        assertThat(headersExceptDate(response).keySet()).isEqualTo(headersExceptDate(reference).keySet());
         assertThat(response.headers().firstValue("Content-Type"))
                 .isEqualTo(reference.headers().firstValue("Content-Type"));
     }

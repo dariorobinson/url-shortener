@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.postgresql.util.PSQLException;
 import org.postgresql.util.PSQLState;
 import org.postgresql.util.ServerErrorMessage;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 
 /** D65: recognising exactly one unique constraint from pgjdbc's structured fields (unit, no database). */
@@ -108,12 +109,45 @@ class PostgresServerErrorsTest {
     }
 
     @Test
-    void shouldReturnAnEmptySqlStateForNullNoPsqlExceptionOrNoServerMessage() {
+    void shouldReturnAnEmptySqlStateForNullOrAChainWithoutSqlException() {
         assertThat(PostgresServerErrors.sqlState(null)).isEmpty();
         assertThat(PostgresServerErrors.sqlState(new RuntimeException("plain", new IllegalStateException()))).isEmpty();
-        assertThat(PostgresServerErrors.sqlState(new PSQLException("client side", PSQLState.UNEXPECTED_ERROR)))
-                .isEmpty();
         // Positive control: the same helper does find a state when one exists.
         assertThat(PostgresServerErrors.sqlState(psql("23505", "c"))).isPresent();
+    }
+
+    @Test
+    void shouldFallBackToTheClientSqlStateWhenThereIsNoServerMessage() {
+        assertThat(PostgresServerErrors.sqlState(new PSQLException("client side", PSQLState.UNEXPECTED_ERROR)))
+                .contains("99999");
+        assertThat(PostgresServerErrors.sqlState(
+                new DataAccessResourceFailureException("x", new SQLException("x", "08006")))).contains("08006");
+        // A SQLException without a state is skipped in favour of the next one in the chain.
+        assertThat(PostgresServerErrors.sqlState(new SQLException("no state",
+                new PSQLException("x", PSQLState.CONNECTION_FAILURE)))).contains("08006");
+        // A blank state is skipped too.
+        assertThat(PostgresServerErrors.sqlState(new SQLException("blank", " ",
+                new SQLException("x", "08006")))).contains("08006");
+        // The server state still wins over a client-side one further out in the chain.
+        assertThat(PostgresServerErrors.sqlState(new SQLException("outer", "08006", psql("23503", "c"))))
+                .contains("23503");
+    }
+
+    @Test
+    void shouldNotTreatAClientSideUniqueStateAsAUniqueViolation() {
+        PSQLException clientSide = new PSQLException("x", PSQLState.UNIQUE_VIOLATION);
+
+        assertThat(PostgresServerErrors.isUniqueViolation(clientSide, UNIQUE)).isFalse();
+        // Positive control: the client state is visible to sqlState, so the false above is meaningful.
+        assertThat(PostgresServerErrors.sqlState(clientSide)).contains("23505");
+    }
+
+    @Test
+    void shouldTerminateTheSqlStateFallbackOnACyclicCauseChain() {
+        RuntimeException first = new RuntimeException("first");
+        RuntimeException second = new RuntimeException("second", first);
+        first.initCause(second);
+
+        assertThat(PostgresServerErrors.sqlState(first)).isEmpty();
     }
 }

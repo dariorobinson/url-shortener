@@ -8,7 +8,10 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.schwab.urlshortener.domain.exception.ShortUrlDeletedException;
+import com.schwab.urlshortener.service.StatsPeriod;
+import com.schwab.urlshortener.service.exception.InvalidStatsQueryException;
 import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
+import com.schwab.urlshortener.service.exception.StatsParameter;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -25,6 +28,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
@@ -138,6 +142,55 @@ class GlobalExceptionHandlerTest {
 
         ProblemDetail body = (ProblemDetail) response.getBody();
         assertThat(body.getInstance().toString()).isEqualTo("/api/v1/urls");
+    }
+
+    @Test
+    void shouldMapInvalidStatsQueryToSortedFieldViolationsWithTheQueryDetailAndNoValue() {
+        MockHttpServletRequest withQuery = new MockHttpServletRequest("GET", "/api/v1/urls/aB3dE9x/stats");
+        withQuery.setQueryString("timezone=secret-zone-marker&from=secret-from-marker");
+        InvalidStatsQueryException exception = new InvalidStatsQueryException(List.of(
+                new InvalidStatsQueryException.Violation(StatsParameter.TO, StatsPeriod.DATE_RULE),
+                new InvalidStatsQueryException.Violation(StatsParameter.TIMEZONE, StatsPeriod.TIMEZONE_RULE),
+                new InvalidStatsQueryException.Violation(StatsParameter.FROM, StatsPeriod.DATE_RULE)));
+
+        ResponseEntity<ProblemDetail> response = handler.handleInvalidStatsQuery(exception, withQuery);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        ProblemDetail body = response.getBody();
+        assertThat(body.getProperties()).containsOnlyKeys("errorCode", "errors");
+        assertThat(body.getProperties()).containsEntry("errorCode", "VALIDATION_FAILED");
+        assertThat(body.getDetail()).isEqualTo("The query parameters failed validation.");
+        assertThat(body.getInstance().toString()).isEqualTo("/api/v1/urls/aB3dE9x/stats");
+        assertThat(body.getProperties().get("errors")).isEqualTo(List.of(
+                new FieldViolation("from", StatsPeriod.DATE_RULE),
+                new FieldViolation("timezone", StatsPeriod.TIMEZONE_RULE),
+                new FieldViolation("to", StatsPeriod.DATE_RULE)));
+        assertThat(body.toString()).doesNotContain("marker");
+    }
+
+    @Test
+    void shouldKeepTheBodyTextOfValidationFailedForRequestBodies() {
+        // The query text is a separate constant: US-006 and US-009 pin the "request body" text of the shared map.
+        assertThat(GlobalExceptionHandler.QUERY_VALIDATION_DETAIL).isEqualTo("The query parameters failed validation.");
+        ProblemDetail body = handler.handleInvalidStatsQuery(new InvalidStatsQueryException(
+                List.of(new InvalidStatsQueryException.Violation(StatsParameter.FROM, StatsPeriod.ORDER_RULE))),
+                request).getBody();
+        assertThat(body.getDetail()).isNotEqualTo("The request body failed validation.");
+    }
+
+    @Test
+    void shouldMapAnUnexpectedOrRepeatedParameterExceptionToMalformedRequestWithoutItsMessage() throws Exception {
+        MockHttpServletRequest stats = new MockHttpServletRequest("GET", "/api/v1/urls/aB3dE9x/stats");
+
+        ResponseEntity<Object> response = handler.handleException(
+                new ServletRequestBindingException("Unexpected or repeated query parameter"),
+                new ServletWebRequest(stats));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        ProblemDetail body = (ProblemDetail) response.getBody();
+        assertThat(body.getProperties()).containsOnlyKeys("errorCode");
+        assertThat(body.getProperties()).containsEntry("errorCode", "MALFORMED_REQUEST");
+        assertThat(body.getDetail()).isEqualTo("The request could not be read.");
     }
 
     private enum Lifecycle {

@@ -2,6 +2,7 @@ package com.schwab.urlshortener.api;
 
 import com.schwab.urlshortener.api.dto.CreateShortUrlRequest;
 import com.schwab.urlshortener.api.dto.ShortUrlResponse;
+import com.schwab.urlshortener.api.dto.ShortUrlStatsResponse;
 import com.schwab.urlshortener.api.dto.UpdateShortUrlRequest;
 import com.schwab.urlshortener.api.error.ErrorResponseSchema;
 import com.schwab.urlshortener.config.OpenApiConfig;
@@ -10,6 +11,7 @@ import com.schwab.urlshortener.service.Caller;
 import com.schwab.urlshortener.service.CreateShortUrlCommand;
 import com.schwab.urlshortener.service.ShortUrlService;
 import com.schwab.urlshortener.service.ShortUrlView;
+import com.schwab.urlshortener.service.exception.StatsParameter;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.enums.ParameterIn;
@@ -20,12 +22,17 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import java.util.Arrays;
+import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
+import org.springframework.util.MultiValueMap;
+import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -33,13 +40,15 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Short URL management API. {@code POST /api/v1/urls}, {@code GET /api/v1/urls/{code}} and
- * {@code PATCH /api/v1/urls/{code}} are admitted by the filter-chain rule {@code /api, /api/** -> hasRole(USER)}
- * (rule 6 in the architecture access table; ADMIN passes through the role hierarchy, D3).
+ * Short URL management API. {@code POST /api/v1/urls}, {@code GET /api/v1/urls/{code}},
+ * {@code PATCH /api/v1/urls/{code}} and {@code GET /api/v1/urls/{code}/stats} are admitted by the filter-chain rule
+ * {@code /api, /api/** -> hasRole(USER)} (rule 6 in the architecture access table; ADMIN passes through the role
+ * hierarchy, D3).
  * {@code DELETE /api/v1/urls/**} is admitted by rule 5, {@code hasRole(ADMIN)}, which comes first: a USER gets 403
  * before any handler runs, whatever the code (D3). Anonymous callers get 401 from the entry point (D30).
  *
@@ -63,6 +72,10 @@ import org.springframework.web.bind.annotation.RestController;
 class ShortUrlController {
 
     static final String BASE_PATH = "/api/v1/urls";
+
+    /** D100: the only query parameter names the stats endpoint accepts, each at most once. */
+    static final Set<String> STATS_PARAMETERS = Arrays.stream(StatsParameter.values())
+            .map(StatsParameter::wireName).collect(Collectors.toUnmodifiableSet());
 
     private final ShortUrlService service;
     private final ShortUrlLinks links;
@@ -146,6 +159,87 @@ class ShortUrlController {
                     schema = @Schema(implementation = ErrorResponseSchema.class)))
     ShortUrlResponse get(@PathVariable("code") String code, @Parameter(hidden = true) Authentication authentication) {
         return ShortUrlResponse.from(service.get(code, callerOf(authentication)), links);
+    }
+
+    @GetMapping("/{code}/stats")
+    @Operation(summary = "Get click statistics for a short URL",
+            description = """
+                    Returns the all-time click count (totalClicks), the time of the latest click (lastAccessedAt, \
+                    an ISO-8601 UTC instant, or null before the first click) and a per-day breakdown (daily) with \
+                    one entry for every local date from `from` to `to`, including days with 0 clicks. Days are \
+                    local calendar days in the requested time zone, so a day can be 23 or 25 hours long where the \
+                    zone changes its clock. Only the creator or an ADMIN may read the stats; a code that is \
+                    unknown, malformed, deleted or owned by someone else gives the same 404 SHORT_URL_NOT_FOUND \
+                    (D4, D13). DEACTIVATED links are returned. Parameters are validated before the link is looked \
+                    up, so invalid parameters give 400 even for a code the caller cannot see. Only the parameters \
+                    timezone, from and to are accepted, each at most once; any other or repeated name gives 400 \
+                    MALFORMED_REQUEST.""",
+            parameters = {
+                @Parameter(name = "code", in = ParameterIn.PATH,
+                        description = "The short code: Base62, 3 to 32 characters, case-sensitive. A value that "
+                                + "can never be a code gets 404."),
+                @Parameter(name = StatsParameter.TIMEZONE_NAME, in = ParameterIn.QUERY, required = false,
+                        description = "IANA time zone ID used to bucket clicks into local days, for example "
+                                + "America/New_York or Asia/Kolkata. Optional; defaults to UTC. The value is "
+                                + "case-sensitive and not trimmed. UTC offsets such as +05:00 or Z, prefixed offsets "
+                                + "such as UTC+5 or GMT-3, UT and three-letter abbreviations such as PST are "
+                                + "rejected with 400. Etc/GMT+5 and similar Etc/GMT zones are accepted, but follow "
+                                + "the IANA (POSIX) sign convention: Etc/GMT+5 is five hours BEHIND UTC (UTC-5). A "
+                                + "+ in a query string must be sent as %2B, or it is read as a space and rejected.",
+                        schema = @Schema(type = "string", defaultValue = "UTC", example = "America/New_York")),
+                @Parameter(name = StatsParameter.FROM_NAME, in = ParameterIn.QUERY, required = false,
+                        description = "First local date, inclusive, in the time zone, as yyyy-MM-dd between "
+                                + "1970-01-01 and 9999-12-31. Optional; defaults to 29 days before `to` (so the "
+                                + "default window is the last 30 days), but not before 1970-01-01. The window "
+                                + "from..to may hold at most 366 days, and from must not be after to.",
+                        schema = @Schema(type = "string", format = "date", example = "2026-03-07")),
+                @Parameter(name = StatsParameter.TO_NAME, in = ParameterIn.QUERY, required = false,
+                        description = "Last local date, inclusive, in the time zone, as yyyy-MM-dd between "
+                                + "1970-01-01 and 9999-12-31. Optional; defaults to today in the time zone. Future "
+                                + "dates are accepted and count 0.",
+                        schema = @Schema(type = "string", format = "date", example = "2026-03-09"))
+            })
+    @ApiResponse(responseCode = "200", description = "The statistics",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ShortUrlStatsResponse.class)))
+    @ApiResponse(responseCode = "400",
+            description = "VALIDATION_FAILED (errors names the parameter) or MALFORMED_REQUEST (unknown or repeated "
+                    + "parameter)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "404",
+            description = "SHORT_URL_NOT_FOUND. The code is unknown, malformed, deleted, or not the caller's; the "
+                    + "responses are indistinguishable.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "406",
+            description = "NOT_ACCEPTABLE. The only response type is application/json. An unparseable Accept also "
+                    + "gets 406, with no body.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    ShortUrlStatsResponse stats(@PathVariable("code") String code,
+            @Parameter(hidden = true) @RequestParam MultiValueMap<String, String> query,
+            @Parameter(hidden = true) Authentication authentication) throws ServletRequestBindingException {
+        requireOnlyKnownSingleParameters(query);
+        return ShortUrlStatsResponse.from(service.stats(code, query.getFirst(StatsParameter.TIMEZONE.wireName()),
+                query.getFirst(StatsParameter.FROM.wireName()), query.getFirst(StatsParameter.TO.wireName()),
+                callerOf(authentication)));
+    }
+
+    /**
+     * D100: an unknown or repeated query parameter name is a malformed request. The name is never echoed, so the
+     * exception text is fixed.
+     */
+    private static void requireOnlyKnownSingleParameters(MultiValueMap<String, String> query)
+            throws ServletRequestBindingException {
+        for (var entry : query.entrySet()) {
+            if (!STATS_PARAMETERS.contains(entry.getKey()) || entry.getValue().size() != 1) {
+                throw new ServletRequestBindingException("Unexpected or repeated query parameter");
+            }
+        }
     }
 
     @PatchMapping(path = "/{code}", consumes = MediaType.APPLICATION_JSON_VALUE)   // D88: application/json only

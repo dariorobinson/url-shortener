@@ -122,8 +122,8 @@ class RedirectIT extends IntegrationTestBase {
         assertThat(body.path("instance").asText()).isEqualTo(rawPath);
     }
 
-    /** Headers except Date, keyed case-insensitively, for equality across responses. */
-    private static Map<String, List<String>> stableHeaders(HttpResponse<String> response) {
+    /** Headers except Date (unlike ApiClient.stableHeaders, Content-Length is kept), keyed case-insensitively. */
+    private static Map<String, List<String>> headersExceptDate(HttpResponse<String> response) {
         Map<String, List<String>> headers = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         response.headers().map().forEach((name, values) -> {
             if (!"date".equalsIgnoreCase(name)) {
@@ -330,7 +330,8 @@ class RedirectIT extends IntegrationTestBase {
         assertRedirectsTo(get, "https://example.com/head?x=1#f");
         assertRedirectsTo(head, "https://example.com/head?x=1#f");
         assertThat(head.body()).isEmpty();
-        assertThat(withoutContentLength(stableHeaders(head))).isEqualTo(withoutContentLength(stableHeaders(get)));
+        assertThat(withoutContentLength(headersExceptDate(head)))
+                .isEqualTo(withoutContentLength(headersExceptDate(get)));
         assertThat(head.headers().allValues("Cache-Control")).containsExactly(NO_STORE);
     }
 
@@ -352,7 +353,7 @@ class RedirectIT extends IntegrationTestBase {
         for (HttpResponse<String> response : List.of(absent, deactivated, deleted)) {
             assertNotFound(response, path);
             assertThat(response.body()).isEqualTo(absent.body());
-            assertThat(stableHeaders(response)).isEqualTo(stableHeaders(absent));
+            assertThat(headersExceptDate(response)).isEqualTo(headersExceptDate(absent));
             assertThat(response.headers().firstValue("Location")).isEmpty();
         }
     }
@@ -374,7 +375,7 @@ class RedirectIT extends IntegrationTestBase {
         for (HttpResponse<String> response : List.of(absent, deactivated, deleted)) {
             assertThat(response.statusCode()).isEqualTo(404);
             assertThat(response.body()).isEmpty();
-            assertThat(stableHeaders(response)).isEqualTo(stableHeaders(absent));
+            assertThat(headersExceptDate(response)).isEqualTo(headersExceptDate(absent));
             assertThat(response.headers().firstValue("Location")).isEmpty();
         }
         // The GET body of the same path names the cause SHORT_URL_NOT_FOUND (a HEAD has no body to assert).
@@ -398,7 +399,7 @@ class RedirectIT extends IntegrationTestBase {
         expected.remove("instance");
         actual.remove("instance");
         assertThat(actual).isEqualTo(expected);
-        assertThat(stableHeaders(response)).isEqualTo(stableHeaders(reference));
+        assertThat(headersExceptDate(response)).isEqualTo(headersExceptDate(reference));
     }
 
     @ParameterizedTest

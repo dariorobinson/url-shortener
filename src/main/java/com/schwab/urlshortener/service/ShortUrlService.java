@@ -5,10 +5,12 @@ import com.schwab.urlshortener.domain.ShortUrl;
 import com.schwab.urlshortener.domain.ShortUrlStatus;
 import com.schwab.urlshortener.domain.exception.ShortUrlAlreadyActiveException;
 import com.schwab.urlshortener.domain.exception.ShortUrlAlreadyDeactivatedException;
+import com.schwab.urlshortener.repository.ClickEventRepository;
 import com.schwab.urlshortener.repository.PostgresServerErrors;
 import com.schwab.urlshortener.repository.ShortUrlRepository;
 import com.schwab.urlshortener.service.exception.AliasAlreadyExistsException;
 import com.schwab.urlshortener.service.exception.InvalidAliasException;
+import com.schwab.urlshortener.service.exception.InvalidStatsQueryException;
 import com.schwab.urlshortener.service.exception.InvalidUrlException;
 import com.schwab.urlshortener.service.exception.ShortCodeUnavailableException;
 import com.schwab.urlshortener.service.exception.ShortUrlConcurrentModificationException;
@@ -21,6 +23,7 @@ import com.schwab.urlshortener.validation.UrlValidator;
 import java.net.URI;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
@@ -47,13 +50,15 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>{@code get} runs in a read-only {@code TransactionTemplate} built in the constructor, never under
  * {@code @Transactional}: that annotation stays forbidden on every method of this class. {@code setActive} and
  * {@code delete} run in the third template, {@code readWrite} (REQUIRED, read-write), so the load, the transition
- * and the versioned UPDATE share one transaction (D35).
+ * and the versioned UPDATE share one transaction (D35). {@code stats} runs in a fourth template, {@code snapshotRead}
+ * (read-only, REPEATABLE READ, D102), so the link read and the daily counts describe one snapshot.
  */
 @Slf4j
 @Service
 public class ShortUrlService {
 
     private final ShortUrlRepository repository;
+    private final ClickEventRepository clickEvents;
     private final ShortCodeGenerator generator;
     private final UrlValidator urlValidator;
     private final AliasPolicy aliasPolicy;
@@ -62,11 +67,14 @@ public class ShortUrlService {
     private final TransactionTemplate requiresNew;
     private final TransactionTemplate readOnly;
     private final TransactionTemplate readWrite;
+    private final TransactionTemplate snapshotRead;
 
-    public ShortUrlService(ShortUrlRepository repository, ShortCodeGenerator generator, UrlValidator urlValidator,
+    public ShortUrlService(ShortUrlRepository repository, ClickEventRepository clickEvents,
+            ShortCodeGenerator generator, UrlValidator urlValidator,
             AliasPolicy aliasPolicy, Clock clock, ShortCodeProperties codeProperties,
             PlatformTransactionManager transactionManager) {
         this.repository = repository;
+        this.clickEvents = clickEvents;
         this.generator = generator;
         this.urlValidator = urlValidator;
         this.aliasPolicy = aliasPolicy;
@@ -77,6 +85,9 @@ public class ShortUrlService {
         this.readOnly = new TransactionTemplate(transactionManager);
         this.readOnly.setReadOnly(true);
         this.readWrite = new TransactionTemplate(transactionManager);   // REQUIRED, read-write, default isolation
+        this.snapshotRead = new TransactionTemplate(transactionManager);
+        this.snapshotRead.setReadOnly(true);
+        this.snapshotRead.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);   // D102
     }
 
     /**
@@ -107,6 +118,35 @@ public class ShortUrlService {
      */
     public ShortUrlView get(String code, Caller caller) {
         return readOnly.execute(status -> ShortUrlView.from(loadVisible(code, caller)));
+    }
+
+    /**
+     * Click statistics for a link the caller may see (FR-5, D95 to D105). The parameters are validated first, before
+     * any transaction or lookup (D104); then the link is loaded with the same visibility rules as {@link #get}
+     * (a DEACTIVATED link is visible, D105) and its clicks are counted per local day in one snapshot (D102).
+     *
+     * @param timezone the raw {@code timezone} parameter, or null when absent (defaults to UTC, D96)
+     * @param from     the raw {@code from} parameter, or null when absent (D98)
+     * @param to       the raw {@code to} parameter, or null when absent (D98)
+     * @throws InvalidStatsQueryException if any parameter is invalid (D99)
+     * @throws ShortUrlNotFoundException  if the code is malformed, unknown, DELETED, or not the caller's (D4, D13, D72)
+     */
+    public ShortUrlStats stats(String code, String timezone, String from, String to, Caller caller) {
+        StatsPeriod period;
+        try {
+            period = StatsPeriod.resolve(timezone, from, to, clock.instant());         // D45: the clock is read once
+        } catch (InvalidStatsQueryException e) {
+            log.debug("Stats rejected: errorCode=VALIDATION_FAILED parameters={}", e.violations().stream()
+                    .map(v -> v.parameter().wireName()).toList());
+            throw e;
+        }
+        return snapshotRead.execute(status -> {
+            ShortUrl url = loadVisible(code, caller);
+            List<ClickEventRepository.DayCount> rows =
+                    clickEvents.countClicksPerDay(url.getId(), period.dayStarts(), period.end());
+            return ShortUrlStats.of(url.getShortCode(), period, url.getClickCount(), url.getLastAccessedAt(),
+                    period.densify(rows));
+        });
     }
 
     /**

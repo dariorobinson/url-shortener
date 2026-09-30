@@ -53,7 +53,8 @@ public class RedirectSteps {
         return client;
     }
 
-    private static Map<String, List<String>> stableHeaders(HttpResponse<String> served) {
+    /** Headers except Date (unlike ApiClient.stableHeaders, Content-Length is kept), keyed case-insensitively. */
+    private static Map<String, List<String>> headersExceptDate(HttpResponse<String> served) {
         Map<String, List<String>> headers = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         served.headers().map().forEach((name, values) -> {
             if (!"date".equalsIgnoreCase(name)) {
@@ -192,14 +193,14 @@ public class RedirectSteps {
         assertThat(instance).isNotNull();
         assertThat(actual).isEqualTo(expected);
         assertThat(ApiClient.contentType(response)).isEqualTo(ApiClient.contentType(unknown));
-        assertThat(stableHeaders(response)).isEqualTo(stableHeaders(unknown));
+        assertThat(headersExceptDate(response)).isEqualTo(headersExceptDate(unknown));
     }
 
     @Then("the redirect response has the same headers as the remembered one")
     public void hasTheSameHeadersAsTheRememberedOne() {
         assertThat(remembered).isNotNull();
-        Map<String, List<String>> expected = stableHeaders(remembered);
-        Map<String, List<String>> actual = stableHeaders(response);
+        Map<String, List<String>> expected = headersExceptDate(remembered);
+        Map<String, List<String>> actual = headersExceptDate(response);
         expected.remove("content-length");
         actual.remove("content-length");
         assertThat(actual).isEqualTo(expected);

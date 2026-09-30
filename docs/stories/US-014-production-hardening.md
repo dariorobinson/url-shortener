@@ -66,6 +66,10 @@ As an engineer, I want request tracing, security headers, a hardened container i
 - **Fail-open latency under connection-pool exhaustion:** if the Hikari pool is exhausted, a redirect can wait up to the 30-second connection timeout before click recording fails open (D12, D93). Review the pool size and `connection-timeout` during hardening. A shorter timeout for the recorder is one option.
 - **Lost-click metric (deferred from US-010, Q4):** add a Micrometer counter for clicks lost to fail-open. Only do this once a metrics endpoint is exposed; today actuator exposes only `health`.
 
+## Carry-over from US-011 (engineer-approved at US-011 G3)
+- **Request lines over Tomcat's 8 KiB limit** get a bare `text/html` 400 from Tomcat, not a ProblemDetail. It affects every endpoint and no controller advice can reach it; it echoes nothing. Decide between a Tomcat error page / `ErrorReportValve` configuration and accepting the bare response.
+- **Stats cost for very busy links:** the stats query scans a link's clicks within the window (at most 366 days, D98). Consider a statement timeout or daily rollups.
+
 ## Design note
 *(architect)*
 

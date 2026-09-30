@@ -39,12 +39,12 @@ import org.springframework.transaction.support.TransactionTemplate;
  * US-010 AC4, D16, D27, D90 and D91 under concurrency. Nothing sleeps: threads meet at barriers and latches, and
  * every wait on the database is a condition poll on pg_stat_activity with a deadline.
  *
- * <p>AC4: 50 GETs released together by a barrier give exactly 50 clicks and 50 events. the PATCH race: the real recordClick
- * statement is held inside a test-owned transaction while a PATCH waits on the same row lock; the PATCH must
- * still succeed (200, never 409) and the click must survive. the state race: a raw deactivation or soft delete is held
- * while a GET has already resolved the link as ACTIVE and waits at the click UPDATE; once the holder commits the
- * redirect is still served but nothing is counted (D91), and a rollback twin shows the same GET is counted
- * when the link stays ACTIVE.
+ * <p>AC4: 50 GETs released together by a barrier give exactly 50 clicks and 50 events.
+ * The PATCH race: the real recordClick statement is held inside a test-owned transaction while a PATCH waits on
+ * the same row lock; the PATCH must still succeed (200, never 409) and the click must survive.
+ * The state race: a raw deactivation or soft delete is held while a GET has already resolved the link as ACTIVE
+ * and waits at the click UPDATE; once the holder commits the redirect is still served but nothing is counted
+ * (D91), and a rollback twin shows the same GET is counted when the link stays ACTIVE.
  */
 @ExtendWith(OutputCaptureExtension.class)
 class ClickRecordingConcurrencyIT extends IntegrationTestBase {

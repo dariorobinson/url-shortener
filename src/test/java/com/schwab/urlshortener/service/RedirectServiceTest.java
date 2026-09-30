@@ -40,10 +40,12 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.postgresql.util.PSQLException;
+import org.postgresql.util.PSQLState;
 import org.postgresql.util.ServerErrorMessage;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -359,6 +361,24 @@ class RedirectServiceTest {
                 + " exception=IllegalStateException sqlState=none");
         assertThat(logs.list.get(0).getThrowableProxy()).isNull();
         assertThat(logged()).doesNotContain("marker").doesNotContain("https://").doesNotContain("boom");
+    }
+
+    @Test
+    void shouldLogTheClientSqlStateWhenTheConnectionIsLost() {
+        stored("abc1234", URL_MARKER, ShortUrlStatus.ACTIVE);
+        PSQLException lost = new PSQLException("connection lost " + URL_MARKER, PSQLState.CONNECTION_FAILURE);
+        doThrow(new CannotCreateTransactionException("no connection " + URL_MARKER, lost))
+                .when(clickRecorder).record(LINK_ID, CLICK_AT);
+
+        String target = service.resolveAndRecordClick("abc1234");
+
+        assertThat(target).isEqualTo(URL_MARKER);
+        List<ILoggingEvent> warnings = logs.list.stream().filter(e -> e.getLevel() == Level.WARN).toList();
+        assertThat(warnings).hasSize(1);
+        assertThat(warnings.get(0).getFormattedMessage()).isEqualTo("Click not recorded: code=abc1234 id=" + LINK_ID
+                + " exception=CannotCreateTransactionException sqlState=08006");
+        assertThat(warnings.get(0).getThrowableProxy()).isNull();
+        assertThat(logged()).doesNotContain("marker").doesNotContain("https://").doesNotContain("connection lost");
     }
 
     @Test

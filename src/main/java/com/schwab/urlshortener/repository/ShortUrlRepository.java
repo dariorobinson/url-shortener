@@ -20,9 +20,13 @@ public interface ShortUrlRepository extends JpaRepository<ShortUrl, Long> {
 
     Optional<ShortUrl> findByShortCode(String shortCode);
 
-    /** D16, D27: the only writer of click_count/last_accessed_at. Never touches version or updated_at. */
-    String RECORD_CLICK_SQL = "UPDATE short_url SET click_count = click_count + 1, last_accessed_at = :clickedAt"
-            + " WHERE id = :id AND status = 'ACTIVE'";
+    /**
+     * D16, D27: the only writer of click_count/last_accessed_at. Never touches version or updated_at. D94:
+     * GREATEST keeps last_accessed_at at the latest click time when clicks commit out of order, and ignores NULL, so
+     * the first click still sets it.
+     */
+    String RECORD_CLICK_SQL = "UPDATE short_url SET click_count = click_count + 1,"
+            + " last_accessed_at = GREATEST(last_accessed_at, :clickedAt) WHERE id = :id AND status = 'ACTIVE'";
 
     /**
      * Atomically counts one click (D91: only while the row is still ACTIVE). Carries no transaction of its own: it
