@@ -13,10 +13,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
-import java.util.UUID;
 import java.util.Set;
-import java.util.stream.Collectors;
-import java.util.stream.StreamSupport;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -97,10 +95,7 @@ class SecurityIT extends IntegrationTestBase {
         assertThat(response.headers().allValues("WWW-Authenticate")).containsExactly(CHALLENGE);
         assertThat(contentType(response)).startsWith("application/problem+json");
         JsonNode body = json(response);
-        Set<String> keys = StreamSupport.stream(
-                java.util.Spliterators.spliteratorUnknownSize(body.fieldNames(), 0), false)
-                .collect(Collectors.toSet());
-        assertThat(keys).isEqualTo(PROBLEM_KEYS);
+        assertThat(ApiClient.keys(body)).isEqualTo(PROBLEM_KEYS);
         assertThat(body.get("type").asText()).isEqualTo("about:blank");
         assertThat(body.get("title").asText()).isEqualTo("Unauthorized");
         assertThat(body.get("status").asInt()).isEqualTo(401);
@@ -205,10 +200,7 @@ class SecurityIT extends IntegrationTestBase {
         assertThat(contentType(response)).startsWith("application/problem+json");
         assertThat(response.headers().firstValue("WWW-Authenticate")).isEmpty();
         JsonNode body = json(response);
-        Set<String> keys = StreamSupport.stream(
-                java.util.Spliterators.spliteratorUnknownSize(body.fieldNames(), 0), false)
-                .collect(Collectors.toSet());
-        assertThat(keys).isEqualTo(PROBLEM_KEYS);
+        assertThat(ApiClient.keys(body)).isEqualTo(PROBLEM_KEYS);
         assertThat(body.get("type").asText()).isEqualTo("about:blank");
         assertThat(body.get("title").asText()).isEqualTo("Forbidden");
         assertThat(body.get("status").asInt()).isEqualTo(403);

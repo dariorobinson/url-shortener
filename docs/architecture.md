@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-09-29 (US-006 implemented; content negotiation per D70). Each section is marked *planned*, *designed (US-nnn)*, or *implemented (US-nnn)* as work progresses.
+Last updated: 2026-09-29 (US-006 implemented; content negotiation per D70; US-007 implemented). Each section is marked *planned*, *designed (US-nnn)*, or *implemented (US-nnn)* as work progresses.
 
 ## Overview
 
@@ -147,11 +147,14 @@ com.schwab.urlshortener
 │   ├── dto/           # CreateShortUrlRequest, ShortUrlResponse (shared with US-007) (US-006)
 │   └── error/         # ErrorCode, ProblemDetails (implemented (US-005));
 │                      #   GlobalExceptionHandler, FieldViolation, ErrorResponseSchema (docs only) (US-006)
-├── service/           # ShortUrlService, CreateShortUrlCommand, ShortUrlView (US-006)
-│   └── exception/     # InvalidUrl/InvalidAlias/AliasAlreadyExists/ShortCodeUnavailable exceptions (US-006)
+├── service/           # ShortUrlService, CreateShortUrlCommand, ShortUrlView (US-006);
+│   │                  #   Caller(username, admin) (implemented (US-007))
+│   └── exception/     # InvalidUrl/InvalidAlias/AliasAlreadyExists/ShortCodeUnavailable exceptions (US-006);
+│                      #   ShortUrlNotFoundException (implemented (US-007))
 ├── domain/            # ShortUrl entity, ShortUrlStatus
 │   └── exception/     # ShortUrlAlreadyDeactivated/AlreadyActive/Deleted exceptions
-├── shortcode/         # ShortCodeGenerator + implementation
+├── shortcode/         # ShortCodeGenerator + implementation; ShortCodeFormat (D6 format check, shared by
+│                      #   AliasPolicy, US-007 and US-008) (implemented (US-007))
 ├── validation/        # UrlValidator, AliasPolicy
 ├── analytics/         # ClickRecorder + implementation
 └── repository/        # ShortUrlRepository (Spring Data JPA); PostgresServerErrors (US-006; the only
@@ -241,7 +244,7 @@ HTTP mappings are implemented in US-009.
 |---|---|---|---|---|
 | GET | `/{code}` | Public | 302 | 404 (unknown / deleted / deactivated) |
 | POST | `/api/v1/urls` | USER, ADMIN | 201 + `Location` | 400, 401, 406, 409, 415, 503 |
-| GET | `/api/v1/urls/{code}` | Owner, ADMIN | 200 | 401, 404 |
+| GET | `/api/v1/urls/{code}` | Owner, ADMIN | 200 | 401, 404, 406 |
 | PATCH | `/api/v1/urls/{code}` | Owner, ADMIN | 200 | 400, 401, 404, 409 |
 | DELETE | `/api/v1/urls/{code}` | ADMIN | 204 | 401, 403, 404 |
 | GET | `/api/v1/urls/{code}/stats?from&to&timezone` | Owner, ADMIN | 200 | 400, 401, 404 |
@@ -265,6 +268,27 @@ The full detail is in the US-006 Design note.
 - **Flow:** `ShortUrlController` → `ShortUrlService.create(CreateShortUrlCommand)` → `ShortUrlView`, mapped to `ShortUrlResponse` in `api`. Entities never leave `service`.
 - **Content negotiation (D70):** `@RequestMapping(path = "/api/v1/urls", produces = application/json)` on the class. An unacceptable `Accept` (for example `application/xml`, `text/plain` or `application/problem+json`) gets `406 NOT_ACCEPTABLE` with no row created (US-006 AC17).
 
+### Get short URL details — *implemented (US-007)*
+
+The full detail is in the US-007 Design note.
+
+- **Security:** access-table rule 6 admits `GET` and `HEAD /api/v1/urls/{code}`. ADMIN passes through the hierarchy. `SecurityConfig` is unchanged.
+- **Response:** the same `ShortUrlResponse.from(view, links)` as create (D58, D67), `200 application/json`, with the class-level `produces` inherited (D70).
+- **HEAD** is served by the GET mapping (Spring MVC) and returns headers only: 200 with `Content-Type: application/json`, no body, and no `Content-Length` on embedded Tomcat (recorded by QA). It has no side effects.
+- **Caching:** there is no app-level cache header. Spring Security's default `Cache-Control: no-cache, no-store, max-age=0, must-revalidate` (plus `Pragma` and `Expires`) applies, and tests pin it.
+- **Caller:** the controller builds `service.Caller(username, admin)` from the `Authentication`:
+  - `username` is `getName()`, the configured lowercase name (D54).
+  - `admin` is true when `getAuthorities()` contains `Role.ADMIN.authority()` (`ROLE_ADMIN`). The role hierarchy is applied only at authorization decisions, not to `getAuthorities()`.
+  - The service has no Spring Security dependency.
+- **Visibility rule** (`ShortUrlService.loadVisible`, reused by US-009), in this order:
+  1. The D6 format check (`ShortCodeFormat`, format only, never reserved words); a malformed code causes no DB call.
+  2. `findByShortCode` (case-sensitive).
+  3. `DELETED` → hidden for everyone, ADMIN included (D13).
+  4. Not ADMIN and `createdBy` not equal to the username → hidden (D4).
+
+  Every hidden case throws the one `ShortUrlNotFoundException`, which becomes `404 SHORT_URL_NOT_FOUND` with an identical body. The 404 hides ownership and details, not existence: existence is already visible through create's 409 (D1).
+- **Transaction:** a read-only `TransactionTemplate` built in the service constructor. There is still no `@Transactional` in `service` or `api`.
+
 ### Access rules in the filter chain — *implemented (US-005)*
 
 The rules below are evaluated top to bottom, and the first match wins. The exact configuration is in the US-005 Design note §3.
@@ -276,7 +300,7 @@ The rules below are evaluated top to bottom, and the first match wins. The exact
 | 3 | `GET /v3/api-docs`, `/v3/api-docs/**`, `/v3/api-docs.yaml`, `/swagger-ui.html`, `/swagger-ui/**` | public (springdoc 2.8.17 defaults) |
 | 4 | `/actuator`, `/actuator/**` | authenticated (keeps `/actuator` from matching rule 7) |
 | 5 | `DELETE /api/v1/urls/**` | `hasRole(ADMIN)` (D3). It covers trailing-slash and nested variants. 403 is returned before any handler or lookup (US-009 AC6, AC8) |
-| 6 | `/api`, `/api/**` | `hasRole(USER)`; ADMIN passes through the `ADMIN > USER` hierarchy. Ownership (D4) is enforced in the service |
+| 6 | `/api`, `/api/**` | `hasRole(USER)`; ADMIN passes through the `ADMIN > USER` hierarchy. Ownership (D4) is enforced in the service. It admits `POST /api/v1/urls` (US-006) and `GET`/`HEAD /api/v1/urls/{code}` (implemented (US-007)) |
 | 7 | `GET` and `HEAD /*` (any single segment) | public (D32). Not narrowed to the code regex: US-008 AC6 requires 404, not 401, for malformed codes |
 | 8 | anything else | **`denyAll`** (D57): anonymous gets 401 through the entry point, authenticated gets 403 `ACCESS_DENIED`. Only explicitly listed paths can reach a handler, so case or path variants of a restricted prefix (for example `/API/...`) never fall through to a weaker rule |
 
@@ -355,6 +379,10 @@ RFC 7807 `ProblemDetail` responses with an `errorCode` extension, produced by a 
   - D31 extension (D61): 404 `RESOURCE_NOT_FOUND` for unmapped paths, 405 `METHOD_NOT_ALLOWED`, 406 `NOT_ACCEPTABLE`, 415 `UNSUPPORTED_MEDIA_TYPE`
   - Other framework 4xx → 400 `MALFORMED_REQUEST`
   - Anything else → 500 `INTERNAL_ERROR`, generic and logged once at ERROR. Spring Security exceptions are rethrown, not mapped.
+- *Implemented (US-007):*
+  - `ShortUrlNotFoundException` → 404 `SHORT_URL_NOT_FOUND` ("The short URL was not found."), base keys only.
+  - It is distinct from `RESOURCE_NOT_FOUND`, which is used for unmapped paths such as `/api/v1/urls/{code}/`. Tests of the details endpoint must therefore assert the `errorCode`, never only the 404.
+  - US-009 maps `ShortUrlDeletedException` to the same body (D46).
 - **Field-level extension (D56):** `errors`, an array of `{field, message}` sorted by field, used only on `VALIDATION_FAILED`, `INVALID_URL` and `INVALID_ALIAS`. It never contains the rejected value.
 - **Shape parity:** advice bodies are serialized by Spring MVC with the context `ObjectMapper`, the same one the security writer uses. So `errorCode` is top-level on both paths, and 401/403 carry the base keys only.
 - **Still outside the advice:** `StrictHttpFirewall` rejections (plain 400) and errors raised in filters before the `DispatcherServlet` (Boot's `/error`).
@@ -371,4 +399,8 @@ RFC 7807 `ProblemDetail` responses with an `errorCode` extension, produced by a 
 - Error responses are declared on each operation with a documentation-only `Problem` schema (`api/error/ErrorResponseSchema`). springdoc skips advice handlers that have no `@ResponseStatus`, and it models `ProblemDetail` with a nested `properties` map.
 - Every error `@Content` names `mediaType = "application/problem+json"` explicitly. Otherwise springdoc falls back to the mapping's `produces` (`application/json`, D70) and documents errors under the wrong type. `POST /api/v1/urls` documents 406 (D61, D70).
 - The create operation states that IDN hosts are rejected and that clients must submit punycode (D49).
+- *Implemented (US-007):* `GET /api/v1/urls/{code}` documents:
+  - 200 (`application/json`), and 401, 404 and 406 (`application/problem+json`). 405 isn't documented, because it concerns other methods on the path.
+  - Exactly one parameter, `code`.
+  - The D71 use: after an unexpected 409 on create, a 200 confirms the alias is the caller's own.
 - `/v3/api-docs` stays at springdoc's default path and stays public (access-table rule 3).

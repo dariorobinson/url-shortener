@@ -30,6 +30,31 @@ class GlobalExceptionHandlerTest {
     private final MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/urls");
 
     @Test
+    void shouldMapShortUrlNotFoundToExactlyTheBaseKeysAndLogNothingAtWarnOrError() {
+        MockHttpServletRequest getRequest = new MockHttpServletRequest("GET", "/api/v1/urls/aB3dE9x");
+        Logger logger = (Logger) LoggerFactory.getLogger(GlobalExceptionHandler.class);
+        ListAppender<ILoggingEvent> logs = new ListAppender<>();
+        logs.start();
+        logger.addAppender(logs);
+        try {
+            ResponseEntity<ProblemDetail> response = handler.handleShortUrlNotFound(getRequest);
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+            ProblemDetail body = response.getBody();
+            assertThat(body.getProperties()).containsOnlyKeys("errorCode");
+            assertThat(body.getProperties()).containsEntry("errorCode", "SHORT_URL_NOT_FOUND");
+            assertThat(body.getType().toString()).isEqualTo("about:blank");
+            assertThat(body.getTitle()).isEqualTo("Not Found");
+            assertThat(body.getStatus()).isEqualTo(404);
+            assertThat(body.getDetail()).isEqualTo("The short URL was not found.");
+            assertThat(body.getInstance().toString()).isEqualTo("/api/v1/urls/aB3dE9x");
+            assertThat(logs.list).noneSatisfy(e -> assertThat(e.getLevel().isGreaterOrEqual(Level.WARN)).isTrue());
+        } finally {
+            logger.detachAppender(logs);
+        }
+    }
+
+    @Test
     void shouldRethrowAccessDeniedSoTheSecurityFilterCanMapItTo403() {
         AccessDeniedException denied = new AccessDeniedException("denied");
 

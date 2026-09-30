@@ -4,11 +4,14 @@ import com.schwab.urlshortener.api.dto.CreateShortUrlRequest;
 import com.schwab.urlshortener.api.dto.ShortUrlResponse;
 import com.schwab.urlshortener.api.error.ErrorResponseSchema;
 import com.schwab.urlshortener.config.OpenApiConfig;
+import com.schwab.urlshortener.security.Role;
+import com.schwab.urlshortener.service.Caller;
 import com.schwab.urlshortener.service.CreateShortUrlCommand;
 import com.schwab.urlshortener.service.ShortUrlService;
 import com.schwab.urlshortener.service.ShortUrlView;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
 import io.swagger.v3.oas.annotations.headers.Header;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -20,18 +23,22 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Short URL management API. {@code POST /api/v1/urls} is admitted by the filter-chain rule
- * {@code /api, /api/** -> hasRole(USER)} (rule 6 in the architecture access table; ADMIN passes through the
- * role hierarchy, D3). Anonymous callers get 401 from the entry point (D30).
+ * Short URL management API. {@code POST /api/v1/urls} and {@code GET /api/v1/urls/{code}} are admitted by the
+ * filter-chain rule {@code /api, /api/** -> hasRole(USER)} (rule 6 in the architecture access table; ADMIN passes
+ * through the role hierarchy, D3). Anonymous callers get 401 from the entry point (D30).
  *
- * <p>Never annotate this class or its methods with {@code @Transactional}: the service owns one
- * {@code REQUIRES_NEW} transaction per insert attempt.
+ * <p>Never annotate this class or its methods with {@code @Transactional}: the service owns its transactions
+ * (one {@code REQUIRES_NEW} per insert attempt, a read-only template for reads). Ownership rules (D4, D13) live
+ * only in the service; the controller merely tells it who is calling.
  *
  * <p>The class-level {@code produces = application/json} (D70) makes an unacceptable {@code Accept} header fail
  * with 406 at mapping lookup, before the body is read or the service runs, so nothing is created. It must stay
@@ -95,5 +102,46 @@ class ShortUrlController {
         ShortUrlView view = service.create(
                 new CreateShortUrlCommand(request.originalUrl(), request.alias(), authentication.getName()));
         return ResponseEntity.created(links.location(view.shortCode())).body(ShortUrlResponse.from(view, links));
+    }
+
+    @GetMapping("/{code}")
+    @Operation(summary = "Get a short URL",
+            description = """
+                    Returns the short URL only to its creator or to an ADMIN. A code that is unknown, deleted or \
+                    owned by someone else gives the same 404 SHORT_URL_NOT_FOUND, never 403 (D4, D13). DEACTIVATED \
+                    links are returned, with their status. The code is case-sensitive (D6). After an unexpected \
+                    409 ALIAS_ALREADY_EXISTS on create, call this operation with the alias. It returns 200 only if \
+                    the alias is the caller's own, which confirms that an earlier create whose 201 was lost did \
+                    succeed; a 404 means the alias belongs to someone else.""",
+            parameters = @Parameter(name = "code", in = ParameterIn.PATH,
+                    description = "The short code: Base62, 3 to 32 characters, case-sensitive. A value that can "
+                            + "never be a code gets 404."))
+    @ApiResponse(responseCode = "200", description = "The short URL",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ShortUrlResponse.class)))
+    @ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED",
+            content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "404",
+            description = "SHORT_URL_NOT_FOUND. The code is unknown, malformed, deleted, or not the caller's; the "
+                    + "responses are indistinguishable.",
+            content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "406",
+            description = "NOT_ACCEPTABLE. The only response type is application/json. An unparseable Accept also "
+                    + "gets 406, with no body.",
+            content = @Content(mediaType = PROBLEM_JSON, schema = @Schema(implementation = ErrorResponseSchema.class)))
+    ShortUrlResponse get(@PathVariable("code") String code, @Parameter(hidden = true) Authentication authentication) {
+        return ShortUrlResponse.from(service.get(code, callerOf(authentication)), links);
+    }
+
+    /**
+     * Exact authority check. The role hierarchy is applied only by the authorization managers, so
+     * {@code getAuthorities()} holds {@code ROLE_ADMIN} alone for the admin (never the implied {@code ROLE_USER}).
+     * The username is the configured lowercase name, whatever case the client typed (D54).
+     */
+    static Caller callerOf(Authentication authentication) {
+        boolean admin = authentication.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch(Role.ADMIN.authority()::equals);
+        return new Caller(authentication.getName(), admin);
     }
 }

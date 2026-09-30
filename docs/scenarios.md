@@ -21,7 +21,7 @@ See [requirements.md](requirements.md). The ambiguous requirements were resolved
 | 3 | Short-code generator | Done (US-003) |
 | 4 | URL and alias validation | Done (US-004) |
 | 5 | Security foundation (`USER` / `ADMIN`, 401/403) | Done (US-005) |
-| 6 | Create/read API and error handling | Create implemented and reviewed (US-006, awaiting G3); read is US-007 |
+| 6 | Create/read API and error handling | Done (US-006 create, US-007 read) |
 | 7 | Redirect | Planned |
 | 8 | Deactivate/reactivate and soft delete | Planned |
 | 9 | Analytics | Planned |
@@ -100,6 +100,12 @@ See [architecture.md](architecture.md).
   - **QA:** the qa-tester added a scripted-generator seam, 47 create scenarios, and `CreateShortUrlIT`, `ShortCodeCollisionIT` and `CreateShortUrlConcurrencyIT`. The concurrency test includes a lock-based, sleep-free proof. No defects.
   - **Review:** APPROVE in both rounds. The SHOULD findings were fixed: framework 5xx errors weren't logged, and one branch could never run.
   - **Validation:** the orchestrator ran `./mvnw -q clean verify` (731 tests, 0 failures, LINE coverage 99.5%).
+- **US-007 (Task 6, read):**
+  - **Design:** approved at G2 (D72–D74).
+  - **Implementation:** `GET /api/v1/urls/{code}` with the shared D58 body and a `Caller` record (exact `ROLE_ADMIN` check). The service checks run in a fixed order: D6 format with no DB call, then a case-sensitive lookup, then DELETED returns 404 before the ADMIN shortcut, then a non-owner gets 404. The 404 body is byte-identical for every not-visible cause, and the read-only transaction uses no `@Transactional`.
+  - **QA:** `GetShortUrlIT` (ownership matrix, byte-identical 404 proof, case sensitivity, round trip, D71 check-after-409, pins for `Cache-Control` and HEAD) and 36 Cucumber scenarios. No defects.
+  - **Review:** APPROVE in both rounds. The SHOULD findings were fixed: stale docs and unresolved Gherkin owners. R4 conflicts with a recorded decision, so it went to the engineer.
+  - **Validation:** the orchestrator ran `./mvnw -q clean verify` (915 tests, 0 failures, LINE coverage 99.5%).
 
 ---
 

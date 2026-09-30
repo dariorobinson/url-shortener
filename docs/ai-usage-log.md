@@ -654,5 +654,90 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
 
 - **Date:** 2026-09-29
 - **Task:** Commit C4a: US-006, the related docs (D58–D71, design inputs for US-007, US-008, US-009 and US-014), and the `CLAUDE.md` review rules (the endpoint rule plus the three US-006 rules).
+- **Engineer decision:** "approve all" (relayed). **Accepted:** commit C4a exactly as staged. **Committed as `a34d010`** (parent `9ad1945`, 60 files). The main session verifies and pushes (engineer-approved).
+- **Independent verification by the main session, before approval:** re-verified the staging: 60 files, no unstaged or untracked files, no forbidden files, and 4 new `CLAUDE.md` rules. Rebuild: exit 0, Surefire 515/0, Failsafe 216/0 (run/failed).
+- **Validation:** after the commit, the working tree is clean.
+- **Rationale:** *(engineer to add)*
+
+## Entry 23 — US-007 get short URL details API (design)
+
+- **Date:** 2026-09-29
+- **Task:** Architect design note for US-007. The story requires design approval, so it stops at G2.
+- **Inputs:**
+  - the D58 resource shape, shared with create
+  - ownership (D4): a USER who doesn't own the link gets 404, while ADMIN can see any link
+  - deleted links (D13) return 404 to everyone
+  - the D71 check after an unexpected 409, reflected in the OpenAPI docs
+  - the inherited `produces` (D70)
+  - the N1–N3 carry-over
+  - the `SecurityConfig` rule that admits the endpoint
+- **AI recommendation (architect):**
+  - **Endpoint:** `GET /api/v1/urls/{code}` on `ShortUrlController`. It inherits `produces` (D70), reuses `ShortUrlResponse`/`ShortUrlLinks` (D58), and is admitted by access rule 6 (`/api/**` USER). `SecurityConfig` does not change.
+  - **Caller:** a new `service/Caller(username, admin)` record, reused in US-009. ADMIN is detected by an exact `ROLE_ADMIN` authority check; the architect verified that the role hierarchy is applied only in authorization decisions, not in `getAuthorities()`.
+  - **Service checks, in order:**
+    1. D6 format check, with no DB call for a malformed code.
+    2. Case-sensitive lookup.
+    3. DELETED gives 404 for everyone (D13), checked before the ADMIN shortcut.
+    4. A non-owner who is not ADMIN gets 404 (D4).
+  - The read runs in a read-only `TransactionTemplate`, with no `@Transactional`.
+  - **404 body:** a single `ShortUrlNotFoundException`. The 404 body is byte-identical for malformed, unknown, deleted and not-yours codes. The 404 hides ownership and details, not existence (create's 409 and the redirect already reveal existence).
+  - **`Cache-Control`:** relies on Spring Security's default (`no-store` is included), pinned by QA.
+  - **`ShortCodeFormat`:** a new helper shared with `AliasPolicy`.
+  - **OpenAPI:** includes the D71 note.
+  - **QA plan:** `GetShortUrlIT` with an ownership matrix, a byte-identical 404 proof, case sensitivity, a create/GET round trip, the D71 check-after-409, the D70 406 and HEAD; Cucumber for every AC; the N1–N3 carry-over.
+- **Engineer decisions requested:**
+  - **Q1 (blocking):** a malformed code returns 404, not 400.
+  - **Q2:** keep the default `Cache-Control`.
+  - **Q3:** confirm that the 404 hides ownership, not existence.
+  - **Q4:** non-blocking.
+- **Engineer decision:** "approve all" (relayed). **Accepted:**
+  - **Q1 → D72:** a malformed code gets the same 404, checked before the DB call. It is added to US-008 as a design input.
+  - **Q2 → D73:** keep the default `Cache-Control`, pinned by QA.
+  - **Q3 → D74:** confirmed that a 404 hides ownership, not existence.
+  - The rest of the design note is approved as written.
+- **Engineer guardrails:**
+  - DELETED is checked before the ADMIN shortcut.
+  - ADMIN is detected by the exact `ROLE_ADMIN` authority.
+  - `createdBy` never appears in the view or the response.
+  - No case folding.
+  - No `@Transactional` on `get`.
+  - Every 404 test asserts the `errorCode`.
+  - C4b is not pre-approved.
+- **C4a push:** the main session verified `a34d010` (parent `9ad1945`, 60 files, no forbidden files, trailer present) and **pushed it; `origin/main` is now `a34d010`**.
+- **Rationale:** *(engineer to add)*
+- **Validation:** the architect cited the Spring Security 6.5, Spring Framework 6.2, Spring Data JPA 3.5 and PostgreSQL 18 sources and docs. The orchestrator confirmed that only the US-007 Design note and `architecture.md` changed.
+- **Mid-engineer:**
+  - Built `GET /api/v1/urls/{code}`, `Caller`, `Role.authority()`, `ShortUrlService.get` (a read-only `TransactionTemplate` with `REQUIRED` propagation), `ShortCodeFormat` (with `AliasPolicy` delegating to it), `ShortUrlNotFoundException`, and the OpenAPI entry with the D71 note.
+  - The orchestrator checked the guardrails on disk: the check order, the exact `ROLE_ADMIN` authority, no `createdBy` in the view or response, no case folding, and no `@Transactional`.
+- **QA-tester:** `GetShortUrlIT` (53 tests), 36 Cucumber scenarios, the `ShortUrlTestData` owner-seeding helpers, the `OpenApiDocsIT` GET tests, and the N1–N3 carry-over. It recorded that HEAD returns 200 with no body and no `Content-Length`. No defects.
+- **Senior review, round 1: APPROVE.**
+
+  | ID | Severity | Finding |
+  |---|---|---|
+  | R1 | SHOULD | Architecture markers out of date |
+  | R2 | SHOULD | The design note's HEAD `Content-Length` claim contradicted the recorded behaviour |
+  | R3 | SHOULD | Gherkin owner words were written to the database unresolved |
+  | R4 | SHOULD | Move the length constants into `ShortCodeFormat` |
+  | R5–R10 | NIT | Various |
+
+  - QA fixed R3, R6, R7, R9 and R10. The mid-engineer fixed R8 and R10. The orchestrator fixed R1 and R2.
+  - **R4 was not applied**, because it conflicts with the engineer's US-004 G3 decision that the constants stay on the generator. It goes to the engineer.
+- **Senior review, round 2: APPROVE.** R3 was confirmed with no unresolved path left. On R4, the reviewer says leaving it as is is acceptable and worth revisiting only if a second generator appears. New NITs: R11–R13.
+- **Engineer decision:** "approve all" (relayed). **Accepted:**
+  - US-007 is Done.
+  - **R4:** keep the US-004 G3 decision (the constants stay on the generator; revisit only if a second generator appears). The proposal to move them was **Rejected**.
+  - **R5:** relax the HEAD pin. This is test-only and counts as US-007's second and final fix round.
+  - **R11–R13, plus the reviewer's note on raw paths in anonymous entry-point INFO logs:** carried into US-008.
+  - **Review rules:** rules 1, 3 and 4 go into `CLAUDE.md` (the main session added them, for C4b). Rule 2 is **Rejected**, because rule 4 generalises it.
+  - **C4b:** not pre-approved.
+- **Independent verification by the main session:** it re-ran the G3 build (exit 0, Surefire 605/0, Failsafe 310/0). It read `loadVisible` and confirmed the check order: format, then lookup, then DELETED before the ADMIN shortcut, then exact owner `equals`. It confirmed that `createdBy` appears in the view and response only in Javadoc stating its absence.
+- **Rationale:** *(engineer to add)*
+- **Validation:** the orchestrator ran `./mvnw -q clean verify`: exit 0, Surefire 605/0 and Failsafe 310/0 (run/failed), including 95 Cucumber scenarios, merged LINE coverage 414/416.
+- **Fix round 2 (R5, final):** the qa-tester replaced `isEmpty()` on `Content-Length` with an "if present, equals the GET body's byte length" check, keeping the other HEAD assertions and a comment recording today's behaviour. Nothing else changed. The orchestrator rebuilt: `./mvnw -q clean verify` gave exit 0, Surefire 605/0, Failsafe 310/0 (run/failed), LINE 414/416. **US-007 set to Done.**
+
+## Entry 24 — Commit C4b (G4)
+
+- **Date:** 2026-09-29
+- **Task:** Commit C4b: US-007, its docs (D72–D74, the US-008 design inputs and carry-over), and the `CLAUDE.md` review rules (three US-007 rules).
 - **Engineer decision:** *(pending G4; not pre-approved)*
 - **Rationale:** *(engineer to add)*

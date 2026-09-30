@@ -1,5 +1,8 @@
 package com.schwab.urlshortener.support;
 
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.Map;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
@@ -31,13 +34,50 @@ public final class ShortUrlTestData {
     }
 
     public void seed(String code, String status, String originalUrl) {
+        seed(code, status, originalUrl, SEED_OWNER);
+    }
+
+    /**
+     * Raw-SQL row owned by {@code owner} in any status (no lifecycle API exists to reach DEACTIVATED or
+     * DELETED). A DELETED row carries {@code deleted_at} and {@code deleted_by} as D44 requires.
+     */
+    public void seed(String code, String status, String originalUrl, String owner) {
         if ("DELETED".equals(status)) {
             jdbc.update("INSERT INTO short_url (short_code, original_url, status, created_by, deleted_at, deleted_by)"
-                    + " VALUES (?, ?, 'DELETED', ?, now(), ?)", code, originalUrl, SEED_OWNER, SEED_OWNER);
+                    + " VALUES (?, ?, 'DELETED', ?, now(), ?)", code, originalUrl, owner, TestUsers.ADMIN);
         } else {
             jdbc.update("INSERT INTO short_url (short_code, original_url, status, created_by) VALUES (?, ?, ?, ?)",
-                    code, originalUrl, status, SEED_OWNER);
+                    code, originalUrl, status, owner);
         }
+    }
+
+    /** Sets click data directly: the only way to get non-zero clicks before the redirect exists. */
+    public void seedClicks(String code, long clickCount, Instant lastAccessedAt) {
+        int updated = jdbc.update("UPDATE short_url SET click_count = ?, last_accessed_at = ? WHERE short_code = ?",
+                clickCount, lastAccessedAt == null ? null : Timestamp.from(lastAccessedAt), code);
+        if (updated != 1) {
+            throw new IllegalStateException("expected exactly one row to seed clicks on");
+        }
+    }
+
+    /** Moves an existing row to DELETED, satisfying D44. */
+    public void markDeleted(String code) {
+        int updated = jdbc.update("UPDATE short_url SET status = 'DELETED', deleted_at = now(), deleted_by = ?"
+                + " WHERE short_code = ?", TestUsers.ADMIN, code);
+        if (updated != 1) {
+            throw new IllegalStateException("expected exactly one row to delete");
+        }
+    }
+
+    /** The columns a read must never change, plus created_at, as read from the database. */
+    public Map<String, Object> rowState(String code) {
+        return jdbc.queryForMap("SELECT version, updated_at, click_count, last_accessed_at, created_at, status"
+                + " FROM short_url WHERE short_code = ?", code);
+    }
+
+    public Instant createdAt(String code) {
+        return jdbc.queryForObject("SELECT created_at FROM short_url WHERE short_code = ?", Timestamp.class, code)
+                .toInstant();
     }
 
     public int countByCode(String code) {

@@ -13,6 +13,14 @@ public final class TestUsers {
     public static final String BOB = "bob";
     public static final String BOB_PASSWORD = "bob-test-password";
 
+    /** Returns the canonical user name, or throws so a typo in a scenario cannot seed or call as nobody. */
+    public static String require(String name) {
+        return switch (name) {
+            case ALICE, BOB, ADMIN -> name;
+            default -> throw new IllegalArgumentException("unknown test user: " + name);
+        };
+    }
+
     private TestUsers() {
     }
 }

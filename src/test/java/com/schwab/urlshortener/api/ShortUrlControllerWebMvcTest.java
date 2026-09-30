@@ -5,7 +5,10 @@ import static com.schwab.urlshortener.support.TestUsers.ADMIN_PASSWORD;
 import static com.schwab.urlshortener.support.TestUsers.ALICE;
 import static com.schwab.urlshortener.support.TestUsers.ALICE_PASSWORD;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.startsWith;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -24,6 +27,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.schwab.urlshortener.config.AppProperties;
 import com.schwab.urlshortener.domain.ShortUrlStatus;
 import com.schwab.urlshortener.security.SecuritySliceTestConfiguration;
+import com.schwab.urlshortener.service.Caller;
 import com.schwab.urlshortener.service.CreateShortUrlCommand;
 import com.schwab.urlshortener.service.ShortUrlService;
 import com.schwab.urlshortener.service.ShortUrlView;
@@ -31,6 +35,7 @@ import com.schwab.urlshortener.service.exception.AliasAlreadyExistsException;
 import com.schwab.urlshortener.service.exception.InvalidAliasException;
 import com.schwab.urlshortener.service.exception.InvalidUrlException;
 import com.schwab.urlshortener.service.exception.ShortCodeUnavailableException;
+import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
@@ -49,6 +54,8 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.AuthorityUtils;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -467,5 +474,198 @@ class ShortUrlControllerWebMvcTest {
                 .doesNotContain("RuntimeException");
         // Positive capture: the handler did log, so the body check above is about the body, not a silent handler.
         assertThat(output.getAll()).contains("Unhandled exception: method=POST path=/api/v1/urls");
+    }
+
+    // ---- US-007: GET /api/v1/urls/{code} (AC1, AC2, AC4, AC6, D4, D54, D70, D72)
+
+    private static final String CODE = "aB3dE9x";
+    private static final String CODE_PATH = PATH + "/" + CODE;
+
+    @Test
+    void shouldReturn200WithTheExactEightFieldResourceAndANullLastAccessedAt() throws Exception {
+        when(service.get(any(), any())).thenReturn(view(CODE, false));
+
+        MvcResult result = mockMvc.perform(get(CODE_PATH).with(httpBasic(ALICE, ALICE_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(header().doesNotExist(HttpHeaders.LOCATION))
+                .andExpect(jsonPath("$.shortCode").value(CODE))
+                .andExpect(jsonPath("$.shortUrl").value("https://short.example/aB3dE9x"))
+                .andExpect(jsonPath("$.originalUrl").value("https://example.com/page"))
+                .andExpect(jsonPath("$.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.customAlias").value(false))
+                .andExpect(jsonPath("$.clickCount").value(0))
+                .andExpect(jsonPath("$.createdAt").value("2026-09-29T14:03:12.123456Z"))
+                .andExpect(jsonPath("$.lastAccessedAt").value((Object) null))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(new TreeSet<>(RESOURCE_KEYS));
+        assertThat(result.getResponse().getContentAsString()).doesNotContain("createdBy").doesNotContain("\"id\"")
+                .doesNotContain("updatedAt").doesNotContain("version").doesNotContain("alice");
+    }
+
+    @Test
+    void shouldReturnADeactivatedLinkWithItsStatus() throws Exception {
+        when(service.get(any(), any())).thenReturn(new ShortUrlView(CODE, "https://example.com/page",
+                ShortUrlStatus.DEACTIVATED, true, 5L, CREATED_AT, CREATED_AT));
+
+        mockMvc.perform(get(CODE_PATH).with(httpBasic(ALICE, ALICE_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("DEACTIVATED"))
+                .andExpect(jsonPath("$.customAlias").value(true))
+                .andExpect(jsonPath("$.clickCount").value(5))
+                .andExpect(jsonPath("$.lastAccessedAt").value("2026-09-29T14:03:12.123456Z"));
+    }
+
+    @Test
+    void shouldPassTheCodeAndANonAdminCallerToTheService() throws Exception {
+        when(service.get(any(), any())).thenReturn(view(CODE, false));
+
+        mockMvc.perform(get(CODE_PATH).with(httpBasic(ALICE, ALICE_PASSWORD))).andExpect(status().isOk());
+
+        ArgumentCaptor<Caller> caller = ArgumentCaptor.forClass(Caller.class);
+        verify(service).get(eq(CODE), caller.capture());
+        assertThat(caller.getValue()).isEqualTo(new Caller("alice", false));
+    }
+
+    @Test
+    void shouldPassTheConfiguredLowercaseUsernameWhateverCaseTheClientTypedOnGet() throws Exception {
+        when(service.get(any(), any())).thenReturn(view(CODE, false));
+
+        mockMvc.perform(get(CODE_PATH).with(httpBasic("ALICE", ALICE_PASSWORD))).andExpect(status().isOk());
+
+        ArgumentCaptor<Caller> caller = ArgumentCaptor.forClass(Caller.class);
+        verify(service).get(any(), caller.capture());
+        assertThat(caller.getValue()).isEqualTo(new Caller("alice", false));
+    }
+
+    @Test
+    void shouldPassAnAdminCallerWithTheAdminFlagSetThroughTheRealFilterChain() throws Exception {
+        when(service.get(any(), any())).thenReturn(view(CODE, false));
+
+        mockMvc.perform(get(CODE_PATH).with(httpBasic(ADMIN, ADMIN_PASSWORD))).andExpect(status().isOk());
+
+        ArgumentCaptor<Caller> caller = ArgumentCaptor.forClass(Caller.class);
+        verify(service).get(any(), caller.capture());
+        assertThat(caller.getValue()).isEqualTo(new Caller("admin", true));
+    }
+
+    @Test
+    void shouldBuildTheCallerFromTheExactRoleAdminAuthorityOnly() {
+        Caller admin = ShortUrlController.callerOf(new UsernamePasswordAuthenticationToken("admin", "n/a",
+                AuthorityUtils.createAuthorityList("ROLE_ADMIN")));
+        Caller user = ShortUrlController.callerOf(new UsernamePasswordAuthenticationToken("alice", "n/a",
+                AuthorityUtils.createAuthorityList("ROLE_USER")));
+        Caller bareName = ShortUrlController.callerOf(new UsernamePasswordAuthenticationToken("mallory", "n/a",
+                AuthorityUtils.createAuthorityList("ADMIN")));
+        Caller none = ShortUrlController.callerOf(new UsernamePasswordAuthenticationToken("nobody", "n/a",
+                AuthorityUtils.NO_AUTHORITIES));
+        Caller both = ShortUrlController.callerOf(new UsernamePasswordAuthenticationToken("both", "n/a",
+                AuthorityUtils.createAuthorityList("ROLE_USER", "ROLE_ADMIN")));
+
+        assertThat(admin).isEqualTo(new Caller("admin", true));
+        assertThat(user).isEqualTo(new Caller("alice", false));
+        assertThat(bareName.admin()).isFalse();
+        assertThat(none.admin()).isFalse();
+        assertThat(both.admin()).isTrue();
+    }
+
+    @Test
+    void shouldReturn404ShortUrlNotFoundWithExactlyTheBaseKeysAndTheRequestPathAsInstance() throws Exception {
+        when(service.get(any(), any())).thenThrow(new ShortUrlNotFoundException());
+
+        MvcResult result = mockMvc.perform(get(CODE_PATH).with(httpBasic(ALICE, ALICE_PASSWORD)))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errorCode").value("SHORT_URL_NOT_FOUND"))
+                .andExpect(jsonPath("$.instance").value(CODE_PATH))
+                .andExpect(jsonPath("$.detail").value("The short URL was not found."))
+                .andExpect(jsonPath("$.title").value("Not Found"))
+                .andExpect(jsonPath("$.status").value(404))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(new TreeSet<>(BASE_KEYS));
+    }
+
+    @Test
+    void shouldReturn401WithAuthenticationRequiredAndNotCallTheServiceWhenAnonymousOnGet() throws Exception {
+        MvcResult result = mockMvc.perform(get(CODE_PATH))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, startsWith("Basic")))
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errorCode").value("AUTHENTICATION_REQUIRED"))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(new TreeSet<>(BASE_KEYS));
+        verifyNoInteractions(service);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"application/xml", "text/plain", "application/problem+json"})
+    void shouldReturn406NotAcceptableAndNotCallTheServiceForAnUnacceptableAcceptOnGet(String accept)
+            throws Exception {
+        MvcResult result = mockMvc.perform(get(CODE_PATH).with(httpBasic(ALICE, ALICE_PASSWORD))
+                        .header(HttpHeaders.ACCEPT, accept))
+                .andExpect(status().isNotAcceptable())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errorCode").value("NOT_ACCEPTABLE"))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(new TreeSet<>(BASE_KEYS));
+        verifyNoInteractions(service);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"application/json", "*/*"})
+    void shouldReturn200ForAnAcceptableAcceptOnGet(String accept) throws Exception {
+        when(service.get(any(), any())).thenReturn(view(CODE, false));
+
+        mockMvc.perform(get(CODE_PATH).with(httpBasic(ALICE, ALICE_PASSWORD)).header(HttpHeaders.ACCEPT, accept))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON));
+
+        verify(service).get(any(), any());
+    }
+
+    @Test
+    void shouldReturn404ResourceNotFoundNotShortUrlNotFoundForATrailingSlashAndNotCallTheService() throws Exception {
+        mockMvc.perform(get(CODE_PATH + "/").with(httpBasic(ALICE, ALICE_PASSWORD)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("RESOURCE_NOT_FOUND"));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void shouldReturn405WithAllowContainingGetForPutOnTheCodePath() throws Exception {
+        mockMvc.perform(put(CODE_PATH).with(httpBasic(ALICE, ALICE_PASSWORD)))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(header().string(HttpHeaders.ALLOW, containsString("GET")))
+                .andExpect(jsonPath("$.errorCode").value("METHOD_NOT_ALLOWED"));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void shouldCarrySecuritysDefaultCacheControlOnTheGet200() throws Exception {
+        when(service.get(any(), any())).thenReturn(view(CODE, false));
+
+        mockMvc.perform(get(CODE_PATH).with(httpBasic(ALICE, ALICE_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-cache, no-store, max-age=0, must-revalidate"))
+                .andExpect(header().string(HttpHeaders.PRAGMA, "no-cache"))
+                .andExpect(header().string(HttpHeaders.EXPIRES, "0"));
+    }
+
+    @Test
+    void shouldReturn500WithAGenericBodyWhenTheServiceFailsUnexpectedlyOnGet() throws Exception {
+        when(service.get(any(), any())).thenThrow(new RuntimeException("secret-marker"));
+
+        MvcResult result = mockMvc.perform(get(CODE_PATH).with(httpBasic(ALICE, ALICE_PASSWORD)))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.errorCode").value("INTERNAL_ERROR"))
+                .andReturn();
+
+        assertThat(result.getResponse().getContentAsString()).doesNotContain("secret-marker");
     }
 }

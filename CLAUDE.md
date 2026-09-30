@@ -93,6 +93,9 @@ Base package: `com.schwab.urlshortener`. `JAVA_HOME` must point to JDK 25.
 - Every 5xx produced by the exception advice is logged at ERROR exactly once with the exception — including framework exceptions routed through `handleExceptionInternal`, not only the `Exception` catch-all.
 - Tests truncate shared tables only in per-test/per-scenario setup, never rely on rows created by another class, and assume serial execution. Enabling parallel test execution requires revisiting truncation and the short-code generator seam together.
 - HTTP tests that forge a restricted header (e.g. `Host`) include a positive control proving the header reached the server.
+- Test code does not use inline fully qualified class names (e.g. `org.mockito.ArgumentMatchers.eq`, `java.util.ArrayList`); use imports or static imports.
+- A HEAD test expecting a 404 has no body to assert `errorCode` on, so it includes a 200 on the same path in the same test as proof the mapping was reached.
+- Test-support lookups that turn a Gherkin or test-data word into a user, owner, or other database value throw on unknown values (no default branch), with one lookup per concept and a single case rule.
 
 ## Post-task report (required at every story completion)
 

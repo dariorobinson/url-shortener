@@ -1,8 +1,6 @@
 package com.schwab.urlshortener.validation;
 
-import static com.schwab.urlshortener.shortcode.SecureRandomShortCodeGenerator.MAX_LENGTH;
-import static com.schwab.urlshortener.shortcode.SecureRandomShortCodeGenerator.MIN_LENGTH;
-
+import com.schwab.urlshortener.shortcode.ShortCodeFormat;
 import java.util.Collection;
 import java.util.Locale;
 import java.util.Set;
@@ -10,10 +8,10 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * Enforces D6 (Base62 alias, {@code MIN_LENGTH} to {@code MAX_LENGTH} characters) and D29
+ * Enforces D6 (format, delegated to {@link ShortCodeFormat}) and D29
  * (reserved words, case-insensitive; built-in set plus configured additions, D48). Pure: the
- * alias is checked as submitted and is never trimmed. The length bounds are the generator's
- * constants, so they are written once.
+ * alias is checked as submitted and is never trimmed. The format rule is written once, in
+ * {@link ShortCodeFormat}.
  */
 public class AliasPolicy {
 
@@ -37,20 +35,6 @@ public class AliasPolicy {
     }
 
     public boolean isValid(String alias) {
-        if (alias == null || alias.length() < MIN_LENGTH || alias.length() > MAX_LENGTH) {
-            return false;
-        }
-        // Explicit ASCII loop instead of a regex: no regex engine or Unicode class semantics involved,
-        // so only [A-Za-z0-9] can pass by construction.
-        for (int i = 0; i < alias.length(); i++) {
-            if (!isBase62(alias.charAt(i))) {
-                return false;
-            }
-        }
-        return !reservedWords.contains(alias.toLowerCase(Locale.ROOT));
-    }
-
-    private static boolean isBase62(char c) {
-        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+        return ShortCodeFormat.isWellFormed(alias) && !reservedWords.contains(alias.toLowerCase(Locale.ROOT));
     }
 }

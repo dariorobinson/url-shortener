@@ -4,6 +4,7 @@ import com.schwab.urlshortener.service.exception.AliasAlreadyExistsException;
 import com.schwab.urlshortener.service.exception.InvalidAliasException;
 import com.schwab.urlshortener.service.exception.InvalidUrlException;
 import com.schwab.urlshortener.service.exception.ShortCodeUnavailableException;
+import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
 import com.schwab.urlshortener.shortcode.SecureRandomShortCodeGenerator;
 import com.schwab.urlshortener.validation.UrlValidator;
 import jakarta.servlet.http.HttpServletRequest;
@@ -55,6 +56,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         texts.put(ErrorCode.INVALID_URL, "The originalUrl is not acceptable.");
         texts.put(ErrorCode.INVALID_ALIAS, "The alias is not acceptable.");
         texts.put(ErrorCode.ALIAS_ALREADY_EXISTS, "The alias is already in use.");
+        texts.put(ErrorCode.SHORT_URL_NOT_FOUND, "The short URL was not found.");
         texts.put(ErrorCode.SHORT_CODE_UNAVAILABLE, "A short code could not be allocated. Retry later.");
         texts.put(ErrorCode.RESOURCE_NOT_FOUND, "The requested resource was not found.");
         texts.put(ErrorCode.METHOD_NOT_ALLOWED, "The request method is not supported for this resource.");
@@ -137,6 +139,12 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(ShortCodeUnavailableException.class)
     ResponseEntity<ProblemDetail> handleShortCodeUnavailable(HttpServletRequest request) {
         return respond(plain(ErrorCode.SHORT_CODE_UNAVAILABLE, request));
+    }
+
+    /** D72, D13, D4, D74: malformed, unknown, deleted and not-yours all give this one body. The service logged. */
+    @ExceptionHandler(ShortUrlNotFoundException.class)
+    ResponseEntity<ProblemDetail> handleShortUrlNotFound(HttpServletRequest request) {
+        return respond(plain(ErrorCode.SHORT_URL_NOT_FOUND, request));
     }
 
     // ---- Catch-all

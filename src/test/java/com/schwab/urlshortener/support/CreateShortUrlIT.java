@@ -396,6 +396,9 @@ class CreateShortUrlIT extends IntegrationTestBase {
         HttpResponse<String> response = create(TestUsers.ALICE, url, null, "Host", "bad host");
 
         assertThat(response.statusCode()).isEqualTo(400);
+        // The 400 came from Tomcat itself, not from the application's problem+json advice.
+        assertThat(ApiClient.contentType(response)).doesNotStartWith("application/problem+json");
+        assertThat(response.body()).doesNotContain("errorCode");
         assertThat(data.countByOriginalUrl(url)).isZero();
     }
 

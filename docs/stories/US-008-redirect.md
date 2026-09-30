@@ -46,6 +46,15 @@ As any visitor, I want to follow a short link, so that I am redirected to the or
 - The redirect controller must **never** declare `produces` (D70). It must answer any `Accept` (browsers, `<img>`, `text/html`). Only the management API (`ShortUrlController`) declares `produces = application/json`.
 - The redirect must not share a base class or meta-annotation that carries `produces`.
 
+## Design inputs carried from US-007 (engineer-approved at US-007 G2)
+- A malformed `{code}` (fails D6) returns the same 404 as an unknown code, checked before any DB call (D72). Reuse the `ShortCodeFormat` helper from US-007, format only, never the reserved-word check (D48).
+
+## Carry-over from US-007 (engineer-approved at US-007 G3)
+- **R11 (NIT, qa-tester):** wrap the two lines over 120 characters in `GetShortUrlSteps` (around lines 170 and 220).
+- **R12 (NIT, qa-tester):** sort the `java.util` imports in `GetShortUrlSteps`.
+- **R13 (NIT, qa-tester):** `ApiClient.passwordOf` lowercases the name but `TestUsers.require` does not. Make `passwordOf` call `TestUsers.require` and drop the `toLowerCase`, so there is one strict lookup per concept (CLAUDE.md rule).
+- **Design input, raw paths in logs:** for anonymous requests, `ProblemDetailAuthenticationEntryPoint` logs `Authentication failed: <method> <raw path>` at INFO, and the catch-all logs the path at ERROR. The redirect is anonymous traffic, so a malformed or arbitrary path appears as client text in logs. The firewall blocks CR/LF and the path stays percent-encoded. The US-008 design must decide whether redirect-path logging needs further limits (for example no path for public routes, or path length caps).
+
 ## Design note
 *(architect)*
 

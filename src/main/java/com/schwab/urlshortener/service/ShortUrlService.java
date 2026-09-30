@@ -2,12 +2,15 @@ package com.schwab.urlshortener.service;
 
 import com.schwab.urlshortener.config.ShortCodeProperties;
 import com.schwab.urlshortener.domain.ShortUrl;
+import com.schwab.urlshortener.domain.ShortUrlStatus;
 import com.schwab.urlshortener.repository.PostgresServerErrors;
 import com.schwab.urlshortener.repository.ShortUrlRepository;
 import com.schwab.urlshortener.service.exception.AliasAlreadyExistsException;
 import com.schwab.urlshortener.service.exception.InvalidAliasException;
 import com.schwab.urlshortener.service.exception.InvalidUrlException;
 import com.schwab.urlshortener.service.exception.ShortCodeUnavailableException;
+import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
+import com.schwab.urlshortener.shortcode.ShortCodeFormat;
 import com.schwab.urlshortener.shortcode.ShortCodeGenerator;
 import com.schwab.urlshortener.validation.AliasPolicy;
 import com.schwab.urlshortener.validation.HttpUris;
@@ -23,7 +26,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Creates short URLs (FR-1, FR-3, FR-10).
+ * Creates short URLs (FR-1, FR-3, FR-10) and reads them for their owner or an ADMIN (FR-12, D4, D13).
  *
  * <p><b>Never annotate {@code create}, this class or its caller with {@code @Transactional}.</b> Each
  * insert attempt runs in its own {@code REQUIRES_NEW} transaction, because PostgreSQL aborts a
@@ -35,6 +38,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>Only a violation of {@code uk_short_url_short_code} means "code taken". Any other constraint
  * violation is rethrown and becomes a 500, never a retry or a 409. The database unique constraint is
  * the final guarantee under concurrency; there is no existence pre-check.
+ *
+ * <p>{@code get} runs in a read-only {@code TransactionTemplate} built in the constructor, never under
+ * {@code @Transactional}: that annotation stays forbidden on every method of this class.
  */
 @Slf4j
 @Service
@@ -47,6 +53,7 @@ public class ShortUrlService {
     private final Clock clock;
     private final int maxAttempts;
     private final TransactionTemplate requiresNew;
+    private final TransactionTemplate readOnly;
 
     public ShortUrlService(ShortUrlRepository repository, ShortCodeGenerator generator, UrlValidator urlValidator,
             AliasPolicy aliasPolicy, Clock clock, ShortCodeProperties codeProperties,
@@ -59,6 +66,8 @@ public class ShortUrlService {
         this.maxAttempts = codeProperties.maxAttempts();
         this.requiresNew = new TransactionTemplate(transactionManager);
         this.requiresNew.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.readOnly = new TransactionTemplate(transactionManager);
+        this.readOnly.setReadOnly(true);
     }
 
     /**
@@ -79,6 +88,39 @@ public class ShortUrlService {
             return createWithAlias(command, now);
         }
         return createWithGeneratedCode(command, now);
+    }
+
+    /**
+     * @return the short URL, if the caller may see it
+     * @throws ShortUrlNotFoundException if the code is malformed (D72) or unknown, the link is DELETED (even for
+     *         ADMIN, D13), or the caller is neither its creator nor ADMIN (D4); the four cases are
+     *         indistinguishable
+     */
+    public ShortUrlView get(String code, Caller caller) {
+        return readOnly.execute(status -> ShortUrlView.from(loadVisible(code, caller)));
+    }
+
+    /** D4, D6, D13, D72. Must run inside a transaction. The order of the checks is part of the contract. */
+    private ShortUrl loadVisible(String code, Caller caller) {
+        if (!ShortCodeFormat.isWellFormed(code)) {
+            // D72: cannot exist, so no DB call. The value is arbitrary client text and is never logged.
+            log.debug("Short URL not visible: reason=MALFORMED");
+            throw new ShortUrlNotFoundException();
+        }
+        ShortUrl url = repository.findByShortCode(code).orElse(null);   // case-sensitive (D6)
+        String reason = null;
+        if (url == null) {
+            reason = "NOT_FOUND";
+        } else if (url.getStatus() == ShortUrlStatus.DELETED) {
+            reason = "DELETED";                                          // D13: before the ADMIN shortcut
+        } else if (!caller.admin() && !url.getCreatedBy().equals(caller.username())) {
+            reason = "NOT_OWNER";                                        // D4: exact equals, no case folding
+        }
+        if (reason != null) {
+            log.debug("Short URL not visible: code={} reason={}", code, reason);
+            throw new ShortUrlNotFoundException();
+        }
+        return url;
     }
 
     private ShortUrlView createWithAlias(CreateShortUrlCommand command, Instant now) {

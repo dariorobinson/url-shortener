@@ -2,6 +2,7 @@ package com.schwab.urlshortener.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -22,6 +23,7 @@ import com.schwab.urlshortener.service.exception.AliasAlreadyExistsException;
 import com.schwab.urlshortener.service.exception.InvalidAliasException;
 import com.schwab.urlshortener.service.exception.InvalidUrlException;
 import com.schwab.urlshortener.service.exception.ShortCodeUnavailableException;
+import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
 import com.schwab.urlshortener.shortcode.ShortCodeGenerator;
 import com.schwab.urlshortener.validation.AliasPolicy;
 import com.schwab.urlshortener.validation.UrlValidator;
@@ -31,10 +33,13 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.postgresql.util.PSQLException;
@@ -47,8 +52,8 @@ import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Create logic (AC2, AC3, AC4, AC5, AC6, AC7, AC11, AC15, D5, D29, D45, D47, D48, D60, D63, D64) against
- * mocks: no Spring context, no database.
+ * Get logic (US-007 AC1-AC5, D4, D13, D72) and create logic (AC2, AC3, AC4, AC5, AC6, AC7, AC11, AC15, D5, D29,
+ * D45, D47, D48, D60, D63, D64) against mocks: no Spring context, no database.
  */
 class ShortUrlServiceTest {
 
@@ -455,6 +460,215 @@ class ShortUrlServiceTest {
         assertThat(messages).anySatisfy(m -> assertThat(m).contains("INVALID_URL"));
         assertThat(String.join("\n", messages)).doesNotContain("bad alias marker")
                 .doesNotContain("secret-path-marker");
+    }
+
+    // ---- get: ownership, check order, D72 (AC1-AC5, D4, D6, D13, D48)
+
+    private static final Caller ALICE = new Caller("alice", false);
+    private static final Caller BOB = new Caller("bob", false);
+    private static final Caller ADMIN = new Caller("admin", true);
+
+    private ShortUrl stored(String code, String owner, ShortUrlStatus status) {
+        ShortUrl url = ShortUrl.create(code, URL, false, owner, NOW_MICROS);
+        if (status == ShortUrlStatus.DEACTIVATED) {
+            url.deactivate(NOW_MICROS);
+        } else if (status == ShortUrlStatus.DELETED) {
+            url.softDelete("admin", NOW_MICROS);
+        }
+        when(repository.findByShortCode(code)).thenReturn(Optional.of(url));
+        return url;
+    }
+
+    private void assertNotVisible(String code, Caller caller) {
+        assertThatThrownBy(() -> service.get(code, caller)).isInstanceOf(ShortUrlNotFoundException.class);
+        verify(repository, times(1)).findByShortCode(code);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ShortUrlStatus.class, names = {"ACTIVE", "DEACTIVATED"})
+    void shouldReturnTheViewToTheOwnerForActiveAndDeactivatedLinks(ShortUrlStatus status) {
+        stored("Abc1234", "alice", status);
+
+        ShortUrlView view = service.get("Abc1234", ALICE);
+
+        assertThat(view.shortCode()).isEqualTo("Abc1234");
+        assertThat(view.status()).isEqualTo(status);
+        assertThat(view.originalUrl()).isEqualTo(URL);
+        assertThat(view.createdAt()).isEqualTo(NOW_MICROS);
+        assertThat(view.clickCount()).isZero();
+        assertThat(view.lastAccessedAt()).isNull();
+        verify(repository, times(1)).findByShortCode("Abc1234");
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ShortUrlStatus.class, names = {"ACTIVE", "DEACTIVATED"})
+    void shouldReturnAnotherUsersLinkToAnAdminForActiveAndDeactivatedLinks(ShortUrlStatus status) {
+        stored("Abc1234", "bob", status);
+
+        ShortUrlView view = service.get("Abc1234", ADMIN);
+
+        assertThat(view.shortCode()).isEqualTo("Abc1234");
+        assertThat(view.status()).isEqualTo(status);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ShortUrlStatus.class, names = {"ACTIVE", "DEACTIVATED"})
+    void shouldThrowNotFoundForANonOwnerUserOnActiveAndDeactivatedLinks(ShortUrlStatus status) {
+        stored("Abc1234", "alice", status);
+
+        assertNotVisible("Abc1234", BOB);
+    }
+
+    @Test
+    void shouldThrowNotFoundForAnUnknownCode() {
+        when(repository.findByShortCode("Nope123")).thenReturn(Optional.empty());
+
+        assertNotVisible("Nope123", ALICE);
+    }
+
+    @Test
+    void shouldThrowNotFoundForAnUnknownCodeWhenTheCallerIsAdmin() {
+        when(repository.findByShortCode("Nope123")).thenReturn(Optional.empty());
+
+        assertNotVisible("Nope123", ADMIN);
+    }
+
+    @Test
+    void shouldThrowNotFoundForADeletedLinkForTheOwnerANonOwnerAndAdmin() {
+        stored("Abc1234", "alice", ShortUrlStatus.DELETED);
+
+        assertThatThrownBy(() -> service.get("Abc1234", ALICE)).isInstanceOf(ShortUrlNotFoundException.class);
+        assertThatThrownBy(() -> service.get("Abc1234", BOB)).isInstanceOf(ShortUrlNotFoundException.class);
+        assertThatThrownBy(() -> service.get("Abc1234", ADMIN)).isInstanceOf(ShortUrlNotFoundException.class);
+        verify(repository, times(3)).findByShortCode("Abc1234");
+    }
+
+    @Test
+    void shouldTreatTheOwnerComparisonAsExactAndCaseSensitive() {
+        stored("Abc1234", "Alice", ShortUrlStatus.ACTIVE);
+
+        assertNotVisible("Abc1234", ALICE);
+    }
+
+    @Test
+    void shouldReturnAnExistingCodeThatIsNowAReservedWordBecauseOnlyTheFormatIsChecked() {
+        stored("Health", "alice", ShortUrlStatus.ACTIVE);
+
+        assertThat(service.get("Health", ALICE).shortCode()).isEqualTo("Health");
+    }
+
+    @Test
+    void shouldLookUpTheCodeExactlyAsGivenWithoutFoldingCase() {
+        when(repository.findByShortCode("AbC123")).thenReturn(Optional.empty());
+
+        assertNotVisible("AbC123", ALICE);
+        verify(repository, never()).findByShortCode("abc123");
+        verify(repository, never()).findByShortCode("ABC123");
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"", "ab", "abcdefghijklmnopqrstuvwxyzABCDEFG", "a-b", "a_b", "abc ", " abc", "abcé",
+            "ＡＢＣ", "abc%20", "abc.json", "abc\n"})
+    void shouldThrowNotFoundWithoutAnyRepositoryCallForAMalformedCode(String code) {
+        assertThatThrownBy(() -> service.get(code, ALICE)).isInstanceOf(ShortUrlNotFoundException.class);
+        assertThatThrownBy(() -> service.get(code, ADMIN)).isInstanceOf(ShortUrlNotFoundException.class);
+
+        verifyNoInteractions(repository);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {3, 32})
+    void shouldQueryTheRepositoryAtTheLengthBoundaries(int length) {
+        String code = "a".repeat(length);
+        when(repository.findByShortCode(code)).thenReturn(Optional.empty());
+
+        assertNotVisible(code, ALICE);
+    }
+
+    @Test
+    void shouldThrowIndistinguishableExceptionsForAllFourCauses() {
+        stored("Owned12", "alice", ShortUrlStatus.ACTIVE);
+        stored("Del1234", "alice", ShortUrlStatus.DELETED);
+        when(repository.findByShortCode("Nope123")).thenReturn(Optional.empty());
+
+        List<Throwable> thrown = List.of(
+                catchThrowable(() -> service.get("a-b", ALICE)),
+                catchThrowable(() -> service.get("Nope123", ALICE)),
+                catchThrowable(() -> service.get("Del1234", ADMIN)),
+                catchThrowable(() -> service.get("Owned12", BOB)));
+
+        assertThat(thrown).allSatisfy(t -> assertThat(t).isExactlyInstanceOf(ShortUrlNotFoundException.class));
+        assertThat(thrown).extracting(Throwable::getMessage).containsOnly("Short URL not found");
+        assertThat(thrown).extracting(Throwable::getCause).containsOnlyNulls();
+    }
+
+    @Test
+    void shouldRunGetInAReadOnlyRequiredTransactionAndCreateInARequiresNewWriteTransaction() {
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        service.get("Abc1234", ALICE);
+
+        ArgumentCaptor<TransactionDefinition> definitions = ArgumentCaptor.forClass(TransactionDefinition.class);
+        verify(transactionManager, times(1)).getTransaction(definitions.capture());
+        assertThat(definitions.getValue().isReadOnly()).isTrue();
+        assertThat(definitions.getValue().getPropagationBehavior())
+                .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRED);
+        verify(transactionManager, times(1)).commit(transactionStatus);
+
+        when(generator.generate()).thenReturn("Xyz9876");
+        service.create(generated(URL));
+
+        ArgumentCaptor<TransactionDefinition> all = ArgumentCaptor.forClass(TransactionDefinition.class);
+        verify(transactionManager, times(2)).getTransaction(all.capture());
+        TransactionDefinition create = all.getAllValues().get(1);
+        assertThat(create.isReadOnly()).isFalse();
+        assertThat(create.getPropagationBehavior()).isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    }
+
+    @Test
+    void shouldLogTheCodeAndReasonButNeverTheUsernameOnNotOwner() {
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+
+        assertNotVisible("Abc1234", BOB);
+
+        List<String> messages = logs.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
+        // Positive capture first, so the absence check below cannot pass vacuously.
+        assertThat(messages).anySatisfy(m -> assertThat(m).contains("Abc1234").contains("NOT_OWNER"));
+        assertThat(logs.list).allSatisfy(e -> assertThat(e.getLevel()).isEqualTo(Level.DEBUG));
+        assertThat(String.join("\n", messages)).doesNotContain("bob").doesNotContain("alice")
+                .doesNotContain("example.com");
+    }
+
+    @Test
+    void shouldLogDeletedAndNotFoundReasonsWithTheCode() {
+        stored("Del1234", "alice", ShortUrlStatus.DELETED);
+        when(repository.findByShortCode("Nope123")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.get("Del1234", ADMIN)).isInstanceOf(ShortUrlNotFoundException.class);
+        assertThatThrownBy(() -> service.get("Nope123", ALICE)).isInstanceOf(ShortUrlNotFoundException.class);
+
+        List<String> messages = logs.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
+        assertThat(messages).anySatisfy(m -> assertThat(m).contains("Del1234").contains("DELETED"));
+        assertThat(messages).anySatisfy(m -> assertThat(m).contains("Nope123").contains("NOT_FOUND"));
+        assertThat(String.join("\n", messages)).doesNotContain("admin").doesNotContain("alice");
+    }
+
+    @Test
+    void shouldNotLogTheSubmittedValueOfAMalformedCode() {
+        assertThatThrownBy(() -> service.get("bad-code-marker!", ALICE)).isInstanceOf(ShortUrlNotFoundException.class);
+
+        List<String> messages = logs.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
+        assertThat(messages).anySatisfy(m -> assertThat(m).contains("MALFORMED"));
+        assertThat(String.join("\n", messages)).doesNotContain("bad-code-marker").doesNotContain("alice");
+    }
+
+    @Test
+    void shouldNotLogAnythingOnASuccessfulGet() {
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+
+        service.get("Abc1234", ALICE);
+
+        assertThat(logs.list).isEmpty();
     }
 
     // ---- transaction boundary guard

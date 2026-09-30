@@ -1,6 +1,6 @@
 # Requirements
 
-Last updated: 2026-09-29 (G3 US-006, D71). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
+Last updated: 2026-09-29 (G2 US-007, D72–D74). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
 
 ## Functional requirements
 
@@ -106,6 +106,9 @@ Last updated: 2026-09-29 (G3 US-006, D71). Decisions below were made by the engi
 | D69 | Other 400 mappings | Method-validation and query-parameter type errors fall back to `400 MALFORMED_REQUEST`. US-011, which has the first query parameters, decides whether they become `VALIDATION_FAILED`. |
 | D70 | Content negotiation on the management API | `ShortUrlController` declares class-level `produces = application/json` (never `application/problem+json`). An unacceptable `Accept` is rejected with 406 at mapping lookup, **before** the body is read or the service runs, so nothing is created. Precedence is 401 > 405 > 415 > 406 > 400. An **unparseable** `Accept` header gets a 406 with an **empty body**, a known deviation from D61's "406 carries a problem+json body". DELETE with an unacceptable `Accept` also gets 406, inherited from the class. The redirect controller (US-008) **never** declares `produces`. |
 | D71 | Lost 201 before a retry | Accepted and documented. If a create commits but the client never sees the 201 (the response write fails or the client disconnects), a same-alias retry gets `409 ALIAS_ALREADY_EXISTS`. After an unexpected 409, the client can call `GET /api/v1/urls/{alias}`, which returns 200 only if the alias is its own (D4), confirming the earlier create succeeded. This is stated in the OpenAPI 409 description and in US-007. A generated-code retry creates a second link (D5). A real idempotency key is on the production roadmap (US-014/US-015). |
+| D72 | Malformed codes | A `{code}` that fails the D6 format (length 3–32, `[A-Za-z0-9]`) returns the **same `404 SHORT_URL_NOT_FOUND`** as an unknown code. It is checked in the service before any DB call, and applies to the management API (US-007, US-009) and the redirect (US-008). |
+| D73 | Cache-Control on management reads | Spring Security's default `Cache-Control` (which includes `no-store`) is kept, and the application does not set it. Tests pin the exact value. |
+| D74 | What a 404 reveals | In the management API, a 404 hides **ownership and details, not existence**. Existence is already revealed by create's 409 (D1) and by the public redirect. The 404 body is identical for malformed, unknown, deleted and not-yours codes. |
 
 ## Environment and platform decisions
 
