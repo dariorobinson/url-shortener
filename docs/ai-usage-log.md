@@ -1086,3 +1086,27 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
 - **AI observation raised with the engineer:** US-012–US-015 contain no story that *implements* expiration (US-012 asks questions, US-013 plans, US-014 hardens, US-015 documents), yet FR-4/FR-9 and Scenario 2 require the enhancement to be introduced. The main session recommended adding **US-016 (implement expiration)** after US-013.
 - **Engineer decision:** **Accepted** ("yes") — US-016 is added, to be created once US-013 is approved.
 - **Commit C6b** (US-011) is made by the main session after the engineer's approval, consistent with the updated Git rule.
+
+## Entry 34 — US-012 Scenario 3: clarifying the ambiguous expiration requirement
+
+- **Date:** 2026-09-30
+- **Task:** Turn "URLs should expire after some time" into answerable questions before any design or code (US-012).
+- **AI recommendation (main session, no agents):** 16 questions (E1–E16), each with a non-binding proposed default, reason and trade-off — covering optionality, how expiry is set, scope, the redirect response (410 vs 404), cacheability of 410, the exact boundary, computed-vs-stored status, precedence with deactivated/deleted, mutability and who may change it, revival, code reuse, analytics after expiry, API representation, HEAD, default TTL, and cleanup.
+- **Engineer decision:** **Accepted** — "accept all proposed defaults". Recorded as D106–D121.
+- **Rationale:** *(engineer to add)*
+- **Validation:** US-012 AC1–AC3 checked: every required topic covered, defaults marked non-binding until answered, no code touched. Scenario 3 in `docs/scenarios.md` records the questions and answers.
+
+## Entry 35 — US-013 Scenario 2: brownfield impact analysis for expiration
+
+- **Date:** 2026-09-30
+- **Task:** Analyse the impact of adding expiration (D106–D121) to the shipped codebase before any change (US-013).
+- **AI work (main session, no agents):** read the shipped code (`ShortUrl`, `RedirectService`, `ShortUrlService`, `JpaClickRecorder`, the DTOs, `ErrorCode`) and the test suite. Produced a module-by-module change list, a V3 migration sketch, API changes, six design points with recommendations (X1–X6), twelve regression risks and a rollout plan.
+- **Notable findings:**
+  - Two US-009 tests currently assert that `expiresAt` in a PATCH body is **rejected**. The change is a deliberate reversal of existing behaviour, and those tests must be flipped and listed.
+  - `RedirectService.resolveAndRecordClick` reads the clock twice. Expiry needs a single instant for both the check and the click time.
+  - Click recording needs an expiry guard in SQL, for the same reason as D91.
+  - Bean Validation's `@Future` would bypass the injected `Clock`.
+  - Jackson accepts epoch numbers for timestamps by default, which conflicts with D59's strictness.
+- **Engineer decision:** **Accepted** ("approve all"): the analysis; X1–X6 as D122–D127; US-016 created and added to US-015's `depends_on`; US-012 and US-013 committed together as C7.
+- **Rationale:** *(engineer to add)*
+- **Validation:** US-013 AC1–AC6 mapped to `docs/scenarios.md` Scenario 2 §1–§7; no code or migration changed.

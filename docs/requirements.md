@@ -1,6 +1,6 @@
 # Requirements
 
-Last updated: 2026-09-30 (G3 US-011, D96 amended). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
+Last updated: 2026-09-30 (US-013, D122–D127). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
 
 ## Functional requirements
 
@@ -140,6 +140,28 @@ Last updated: 2026-09-30 (G3 US-011, D96 amended). Decisions below were made by 
 | D103 | Stats index-use guard | A repository test runs `EXPLAIN` with `enable_seqscan` off and asserts that the stats query uses `ix_click_event_short_url_id_clicked_at`. |
 | D104 | Stats validation order | Parameters are validated (400) before visibility (404), and both happen before any database work. Precedence: 401 > 405 > 406 > 400 > 404. Neither order reveals ownership (D74). |
 | D105 | Stats for deactivated links | Stats reuse `loadVisible`, so a DEACTIVATED link's stats are returned to its owner and to ADMIN, as the details endpoint returns the link. Malformed, unknown, deleted and not-yours codes all get the identical `404 SHORT_URL_NOT_FOUND` (D4, D13, D74). |
+| D106 | Expiration is optional (E1, US-012) | Expiration is set per link and is optional. There is **no default TTL**: a link without `expiresAt` never expires, so existing links and clients are unaffected. |
+| D107 | How expiration is set (E2) | An absolute instant `expiresAt` (ISO-8601 with an explicit offset or `Z`), supplied at create. It must be strictly in the future (injected `Clock`) and at most **10 years** ahead (configurable). Stored at microsecond precision (D45). No relative TTL form. |
+| D108 | Scope of expiration (E3) | Applies to generated codes and custom aliases alike. |
+| D109 | Redirect of an expired link (E4) | `GET /{code}` on an expired link returns **410 Gone** with a new `errorCode` **`SHORT_URL_EXPIRED`** (extends D31). D74 already accepts that existence is not hidden, so 410 reveals nothing new. |
+| D110 | Caching of 410 (E5) | The 410 carries `Cache-Control: no-store`, because 410 is heuristically cacheable and an owner may later extend the link (D115). |
+| D111 | Expiry boundary (E6) | A link is expired when `now >= expiresAt`, measured with the injected `Clock`. |
+| D112 | Expiry is computed, not stored (E7) | No new status value and no background job. The stored `status` stays `ACTIVE` / `DEACTIVATED` / `DELETED`; "expired" is computed from `expires_at` at request time. |
+| D113 | Precedence with deactivated/deleted (E8) | Deleted or deactivated wins (404, D2). Order: format → lookup → deleted/deactivated → expired (410) → redirect (302). |
+| D114 | Changing expiry (E9) | Owner or ADMIN (D4) may set, extend, shorten or clear `expiresAt` through the existing `PATCH` (D34). An absent `expiresAt` means "unchanged"; an explicit `null` clears it (never expires). `PATCH` accepts a body with `active`, `expiresAt`, or both, but not neither. |
+| D115 | Reviving an expired link (E10) | Allowed: extending or clearing `expiresAt` on an expired link makes it redirect again. |
+| D116 | Reuse of expired codes (E11) | Never, consistent with D1; an expired link keeps its code. |
+| D117 | Analytics after expiry (E12) | Owner and ADMIN can still read details and stats (200). Requests after expiry get 410 and are **not** counted as clicks. |
+| D118 | API representation (E13) | Details, create, PATCH and stats responses add `expiresAt` (`null` = never) and `expired` (boolean, computed at request time). Additive only. |
+| D119 | HEAD on an expired link (E14) | 410 with no body; never counted (D18). |
+| D120 | No configured default TTL (E15) | Not now; could be added later without breaking changes. |
+| D121 | No cleanup of expired links (E16) | Expired links are never hard-deleted (D1); storage growth is a production concern for the roadmap. |
+| D122 | PATCH absent vs `null` (X1, US-013) | `UpdateShortUrlRequest` becomes a small request class that records whether `expiresAt` was present (a Jackson setter sets a flag), so absent = unchanged, `null` = clear, value = set. No `jackson-databind-nullable` dependency. |
+| D123 | Strict `expiresAt` parsing (X2) | `expiresAt` is an `OffsetDateTime` given as a JSON string with an explicit offset or `Z`. Numbers (epoch values) and offset-less local date-times are rejected with `400 MALFORMED_REQUEST` (as D59/D89). |
+| D124 | `expiresAt` validation errors (X3) | A past value, or one beyond the configured horizon, gets `400 VALIDATION_FAILED` with `errors: [{field: "expiresAt", message}]`, never echoing the value (D56, D99). Checked with the injected `Clock` (not `@Future`), after `INVALID_URL` and `INVALID_ALIAS` (extends D63). |
+| D125 | Redundant expiry change (X4) | A PATCH setting the `expiresAt` the link already has returns 200 and writes nothing (no `version` / `updated_at` bump). D26's 409s remain for `active` only. |
+| D126 | Mixed PATCH with a redundant `active` (X5) | If `active` is redundant, the request fails with the D26 409 and **nothing** is applied, expiry included (all-or-nothing). |
+| D127 | Past expiry via PATCH (X6) | Rejected with 400 (same rule as create). To stop a link now, deactivate it. |
 
 ## Environment and platform decisions
 

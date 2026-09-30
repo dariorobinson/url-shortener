@@ -2,6 +2,8 @@
 
 # Deferred work: URL expiration implementation
 
+> **Superseded (2026-09-30):** US-012 and US-013 are `Done`, and the implementation story is now `docs/stories/US-016-implement-expiration.md`.
+
 Implementation stories for URL expiration (schema, entity, redirect behaviour, API changes, tests) are **not created yet**.
 
 They will be created — as new, sequentially-numbered `US-` stories starting after the highest-numbered story in this backlog at the time — only after both of the following are reviewed and approved by the engineer:

@@ -147,12 +147,182 @@ See [architecture.md](architecture.md).
 
 ## Scenario 3 — Ambiguous requirement: "URLs should expire after some time"
 
-**Status:** Not started (Task 10). No code will be written until the open questions are answered by the engineer.
+**Status:** Done (US-012, 2026-09-30). No code was written; the engineer answered every question before the impact analysis (Scenario 2) began.
+
+### The requirement as given
+
+> "URLs should expire after some time."
+
+Taken literally, this cannot be implemented: it does not say *whether* every URL expires, *when*, *who decides*, or *what a visitor sees*. Guessing would bake product decisions into code and schema, and the V1/V2 migrations are forward-only, so a wrong guess is expensive to undo.
+
+### Approach
+
+1. Read the shipped behaviour that expiration would touch: the redirect (US-008), lifecycle and PATCH (US-009), click recording (US-010), stats (US-011), and decisions D1, D2, D4, D18, D34, D74.
+2. List every question whose answer changes code, schema, API, or security, and pair each with a **non-binding** proposed default, its reason, and its trade-off.
+3. Stop and ask the engineer. Scenario 2's impact analysis waited until every question was answered.
+
+### Questions, proposed defaults, and the engineer's answers
+
+The AI proposed a default for every question; the engineer answered **"accept all proposed defaults"**. Each answer is now a recorded decision.
+
+| # | Question | Proposed default (non-binding when proposed) | Why / trade-off | Decision |
+|---|---|---|---|---|
+| E1 | Is expiration optional? | Yes, per link; no default TTL, so links never expire unless set. | Existing links and clients unchanged. A mandatory TTL would change every existing link. | D106 |
+| E2 | How is it set? | Absolute `expiresAt` (ISO-8601 with offset) at create; strictly in the future; at most 10 years ahead; microsecond precision. | One precise format is simpler than also accepting a relative TTL. The cap avoids extreme dates (a lesson from US-011's date limits). | D107 |
+| E3 | Generated codes, aliases, or both? | Both. | Nothing in the requirement distinguishes them. | D108 |
+| E4 | What does the redirect return? | 410 Gone, `SHORT_URL_EXPIRED` (new error code). | The assignment suggests 410; D74 already accepts that a 404 does not hide existence. The 404 alternative is more private but less helpful to a legitimate visitor. | D109 |
+| E5 | Can the 410 be cached? | No: `Cache-Control: no-store`. | 410 is heuristically cacheable; a later extension would otherwise stay invisible to cached clients. | D110 |
+| E6 | Exact boundary? | Expired when `now >= expiresAt`, via the injected `Clock`. | Clear and testable. | D111 |
+| E7 | New status, or computed? | Computed from `expires_at`; `status` unchanged. | No scheduler, no stale window, no race at the boundary. A stored `EXPIRED` status needs a background job. | D112 |
+| E8 | Expired and deactivated/deleted? | Deleted/deactivated wins (404). Order: format → lookup → deleted/deactivated → expired → redirect. | Keeps D2's guarantee that a deactivated link looks unknown. | D113 |
+| E9 | Can it change after create, and by whom? | Owner or ADMIN via the existing PATCH: set, extend, shorten, or clear. Absent = unchanged; `null` = clear. | Mirrors D4. Absent-vs-null needs explicit handling; PATCH must accept a body without `active`. | D114 |
+| E10 | Can an expired link be revived? | Yes, by extending or clearing. | Avoids punishing an owner who forgot to extend. | D115 |
+| E11 | Can an expired code be reused? | Never (D1). | Reuse would silently redirect old links elsewhere — a phishing risk. | D116 |
+| E12 | Stats after expiry? | Owner/ADMIN still see details and stats; post-expiry visits get 410 and are not counted. | Analytics survive expiry; a 410 is not a successful click. | D117 |
+| E13 | API representation? | Add `expiresAt` (`null` = never) and computed `expired`. | Additive; existing clients unaffected. | D118 |
+| E14 | HEAD on an expired link? | 410, no body, not counted. | Consistent with D18. | D119 |
+| E15 | Configured default TTL? | No, not now. | Can be added later without breaking changes. | D120 |
+| E16 | Cleanup of expired links? | No hard delete (D1). | Storage growth becomes a production decision. | D121 |
+
+### AI assistance and engineer review
+
+- **AI contribution:** read the shipped code and decisions, framed 16 questions (the story required at least 8), and proposed defaults. It flagged two non-obvious points the literal requirement hides: 410 responses are heuristically cacheable (E5), and PATCH's absent-vs-`null` semantics (E9).
+- **Engineer decision:** accepted all proposed defaults (D106–D121).
+- **Validation:** US-012 AC1 (all eight required topics are covered: E4, E2/E9, E3, E11, E9, E1, E7, E12), AC2 (each default was labelled non-binding until answered), AC3 (no code, migration, entity or API change in this story).
 
 ---
 
 ## Scenario 2 — Brownfield: adding URL expiration
 
-**Status:** Not started (Tasks 11–12). An impact analysis of the existing codebase is performed and approved before any code changes.
+**Status:** Impact analysis approved (US-013, 2026-09-30). The engineer approved the analysis and the X1–X6 recommendations (D122–D127). Implementation is US-016.
+
+The requirement being analysed is the one clarified in Scenario 3 (D106–D121). This analysis was written against the shipped code at commit `f89795f` (US-001–US-011 done).
+
+### 1. What changes, module by module
+
+| Layer | Class / file | Change | Why (decision) |
+|---|---|---|---|
+| Schema | new `V3__add_short_url_expires_at.sql` | Add nullable `expires_at TIMESTAMPTZ` plus a CHECK (see §2) | D106, D107 |
+| Domain | `ShortUrl` | New `expiresAt` field (updatable). New `isExpiredAt(Instant now)` (`now >= expiresAt`, D111). New `changeExpiry(Instant newExpiry, Instant now)` that refuses deleted links (reusing `requireNotDeleted`) and sets `updated_at` | D111, D114 |
+| Domain | `ShortUrlStatus` | **No change**: expiry is computed, not a status | D112 |
+| Service | `RedirectService.lookup` | Read the `Clock` **once**, before the lookup. After the existing ACTIVE check, throw a new `ShortUrlExpiredException` if expired. Pass that same instant to `ClickRecorder` (today `resolveAndRecordClick` reads the clock a second time, after the lookup) | D109, D111, D113 |
+| Repository | `ShortUrlRepository.RECORD_CLICK_SQL` | Add `AND (expires_at IS NULL OR expires_at > :clickedAt)`, so a link that expires between lookup and recording is not counted, the same idea as D91 | D117 |
+| Service | `ShortUrlService.create` | Validate optional `expiresAt` with the injected `Clock`: strictly future, and at most the configured horizon (10 years). Store it at microsecond precision | D107 |
+| Service | `ShortUrlService.setActive` → generalised update | Apply `active` and/or `expiresAt` in one `readWrite` transaction (same flush/catch pattern, D35). Absent = unchanged, `null` = clear, value = set (must be future and within the horizon) | D114, D115 |
+| Service | `ShortUrlView` | Add `expiresAt`, and `expired` computed with the request's instant | D118 |
+| Service | `loadVisible`, `stats`, `delete` | **No logic change.** Expired links stay visible to owner and ADMIN (D117); delete of an expired link works as today | D117 |
+| API | `CreateShortUrlRequest` | Add optional `expiresAt` | D107 |
+| API | `UpdateShortUrlRequest` | `active` becomes optional; add `expiresAt` with absent / `null` / value semantics; reject a body with neither | D114 |
+| API | `ShortUrlResponse`, `ShortUrlStatsResponse` | Add `expiresAt` and `expired` (additive) | D118 |
+| API | `RedirectController` | No change to the 302 path. A 410 path comes from the handler below | D109 |
+| Errors | `ErrorCode` | Add `SHORT_URL_EXPIRED(410)` | D109 |
+| Errors | `GlobalExceptionHandler` | Map `ShortUrlExpiredException` → 410 ProblemDetail **with `Cache-Control: no-store`**. HEAD → 410, empty body | D110, D119 |
+| Config | new `ExpirationProperties` | `shortener.expiration.max-horizon` (default `P10Y`), validated at startup | D107 |
+| Config | `JacksonConfig` | Strict date parsing for `expiresAt` (see §4, X2) | D59 |
+| Docs | OpenAPI annotations | New fields, 410 on the redirect, absent-vs-`null` PATCH semantics | D118 |
+| Security | `SecurityConfig` | **No change.** No new endpoint; the existing `/api/**` and public `/*` rules already admit everything | — |
+
+### 2. Proposed V3 migration (sketch; exact SQL fixed in US-016's design)
+
+```sql
+-- V3: optional per-link expiration (D106-D112). NULL = never expires.
+ALTER TABLE short_url ADD COLUMN expires_at TIMESTAMPTZ NULL;
+ALTER TABLE short_url ADD CONSTRAINT ck_short_url_expires_after_created
+  CHECK (expires_at IS NULL OR expires_at > created_at);
+```
+
+- **Forward-only and backward-compatible.** A nullable column with no default is a metadata-only change in PostgreSQL (no table rewrite). Every existing row gets `NULL`, meaning "never expires", which matches D106.
+- **The CHECK** encodes the only rule that is timeless: an expiry cannot precede creation. "Strictly in the future at request time" and the 10-year horizon depend on the clock and on configuration, so they stay in the application.
+- **Naming** follows the V1 convention (`ck_short_url_*`), and constraint tests assert the SQLSTATE and constraint name (CLAUDE.md).
+- **No index** is needed. Every lookup is by `short_code` or `id`; `expires_at` is read from the row already loaded. There is no cleanup job to scan by expiry (D121).
+- **Production note:** `ADD CONSTRAINT … CHECK` scans the table under a lock. That is trivial here; on a large table you would use `NOT VALID` and then `VALIDATE CONSTRAINT`. This is recorded for the roadmap.
+- **Old code on the new schema:** Hibernate's `ddl-auto=validate` tolerates an extra column, so a rolling deploy (old app, V3 schema) keeps working.
+
+### 3. API changes (all additive, except one deliberate reversal)
+
+- **Create:** `{"originalUrl", "alias"?, "expiresAt"?}`. A past value, a value beyond the horizon, or a value with no offset is rejected with 400 and nothing is created.
+- **PATCH:** `{"active"?, "expiresAt"?}` with at least one field present:
+  - `{"expiresAt": "…"}` sets or extends the expiry;
+  - `{"expiresAt": null}` clears it;
+  - `{}` is still 400.
+- **Responses:** create, details, PATCH and stats gain `expiresAt` (nullable) and `expired` (boolean).
+- **Redirect:** an expired link gets 410 `SHORT_URL_EXPIRED` with `no-store`. Deleted and deactivated links are still 404, and take precedence (D113).
+- **Deliberate reversal:** today a PATCH or create carrying `expiresAt` is rejected as an unknown field (400 `MALFORMED_REQUEST`, D59). After the change it is accepted. No client can depend on the old behaviour, because it always failed.
+
+### 4. Design points (recommendations approved as D122–D127)
+
+- **X1 — PATCH absent vs `null`.**
+  - **Recommendation:** replace the `UpdateShortUrlRequest` record with a small request class that records whether `expiresAt` was present (a Jackson setter that sets a flag). Tests pin all three cases.
+  - **Reason:** a Java record cannot tell a missing field from `null`, which is the whole difference between "unchanged" and "clear".
+  - **Alternative:** the `jackson-databind-nullable` library (`JsonNullable<T>`).
+  - **Trade-off:** the library is a new dependency and needs springdoc configuration; the hand-written class is about 20 lines, but the rule must be applied by hand.
+- **X2 — Strict timestamps.**
+  - **Recommendation:** type `expiresAt` as `OffsetDateTime`, accept only JSON strings with an explicit offset or `Z`, and reject numbers (Jackson accepts epoch numbers by default) and offset-less local date-times with 400 `MALFORMED_REQUEST`. This follows D59 and D89.
+  - **Reason:** a number or a local time would be read in some implicit zone, which is exactly the class of silent bug US-011 removed.
+  - **Alternative:** Jackson defaults.
+  - **Trade-off:** stricter for clients.
+- **X3 — Validation errors.**
+  - **Recommendation:** a past or too-distant `expiresAt` gets 400 `VALIDATION_FAILED`, with `errors: [{field: "expiresAt", message}]`, never echoing the value (D56, D99). It is checked after `INVALID_URL` and `INVALID_ALIAS` (extends D63). Use the injected `Clock`, **not** Bean Validation's `@Future`.
+  - **Reason:** `@Future` reads the system clock unless a `ClockProvider` is configured, so it would bypass `TestClock` and D45.
+  - **Alternative:** a new `INVALID_EXPIRATION` code.
+  - **Trade-off:** clients read `errors[]`, as they already do for stats (D99).
+- **X4 — A redundant expiry change.**
+  - **Recommendation:** PATCH with the same `expiresAt` the link already has returns 200 and writes nothing (no `version` or `updated_at` bump). The D26 409s stay only for `active`.
+  - **Reason:** setting an expiry is naturally idempotent. Unlike deactivation, "already expires then" is not a conflict.
+  - **Alternative:** 409, mirroring D26.
+  - **Trade-off:** none of substance.
+- **X5 — Mixed PATCH with a redundant `active`.**
+  - **Recommendation:** `{"active": true, "expiresAt": …}` on an already-active link returns 409 `SHORT_URL_ALREADY_ACTIVE`, and **nothing** is applied, expiry included.
+  - **Reason:** this keeps D26 unchanged, and one request is all-or-nothing.
+  - **Alternative:** apply the expiry and ignore the redundant `active`.
+  - **Trade-off:** clients combining both must send the correct `active`.
+- **X6 — Setting an expiry in the past through PATCH.**
+  - **Recommendation:** reject it (400), the same rule as create. To stop a link now, deactivate it.
+  - **Reason:** one rule for "an expiry must be in the future".
+  - **Alternative:** allow a past value, as "expire now".
+  - **Trade-off:** none.
+
+### 5. Regression risks
+
+1. **The deliberate reversal breaks two US-009 (Done) tests.** Both currently list `{"expiresAt":"2030-01-01T00:00:00Z"}` as a body that must be rejected:
+   - `LifecycleIT.shouldReturn400MalformedRequestForABodyThatIsNotAStrictBooleanDocumentAndChangeNothing`
+   - `ShortUrlControllerWebMvcTest.shouldReturn400MalformedRequestWithoutParserDetailsForUnreadablePatchBodies`
+
+   The entry must move out of the "reject" list into a new "accepted" test, and the change must be listed in US-009 by method name.
+2. **PATCH `{}` and `{"active": null}`** must still give 400. Today `@NotNull` on `active` produces `VALIDATION_FAILED` with field `active`. After `active` becomes optional, `{}` needs an explicit "at least one field" check. `{"active": null}` must still be refused, because `active` cannot be cleared. There are existing tests for both, and their expected error shape must not change.
+3. **The pinned click SQL** in `RepositoryAnnotationsTest.EXPECTED_CLICK_SQL` (US-010/US-011 Done) changes, because the new guard is added.
+4. **Exact schema tests** in `ShortUrlSchemaTest.shouldCreateShortUrlColumnsExactlyAsSpecified` and `shouldDeclareAllNamedConstraints` (US-002 Done) must add `expires_at` and the new CHECK.
+5. **The exact error catalogue** in `ErrorCodeTest.shouldContainExactlyTheD31AndD61CatalogueInOrder` (US-005/US-006 Done) must add `SHORT_URL_EXPIRED`.
+6. **The OpenAPI schema field lists** in `OpenApiDocsIT` must add the new fields and the 410 response.
+7. **The create/GET byte-equality round trip** (US-007) still holds for links with no expiry. A link that crosses its expiry between the two calls would differ in `expired`, so tests of it must fix `TestClock`.
+8. **The 302 path must stay byte-identical** (D75, D76). `RedirectIT`'s exact-header assertions must pass unchanged for non-expired links.
+9. **A new counting race:** a link that expires between lookup and click recording must not be counted. The guard in `RECORD_CLICK_SQL` covers it, with a held-lock test like D91's.
+10. **Redirect performance:** there is no new query. `expires_at` is in the row already fetched by `findByShortCode`, so the cost is one `Instant` comparison.
+11. **Stats** must not change. Clicks recorded before expiry remain counted, and post-expiry 410s are never recorded (D117). No stats query changes.
+12. **Time in tests:** every expiry test must use `TestClock` (the placeholder pointer), never the system clock. The boundary is exact (D111), so tests cover `expiresAt − 1µs`, `== expiresAt` and `+ 1µs`.
+
+### 6. Tests required (new)
+
+| Type | Behaviour | Owner (main session) |
+|---|---|---|
+| Unit | `ShortUrl.isExpiredAt` boundary; `changeExpiry` on deleted (throws), on active/deactivated, set/clear | main session |
+| Unit | Service: create validation (past, now, +1µs, horizon, horizon + 1µs); PATCH absent/null/value; X4, X5, X6 | main session |
+| Repository | V3 columns and CHECK (SQLSTATE `23514`, constraint name); click UPDATE not counting after expiry; pinned SQL | main session |
+| Web slice | Strict `expiresAt` parsing (numbers, local date-times, offsets); PATCH `{}` still 400; 410 mapping with `no-store` | main session |
+| Integration (`*IT`) | Redirect: 302 before expiry, 410 at and after (GET and HEAD), 404 when deactivated or deleted even if expired (D113), not counted after expiry, revival by extend and clear (D115), expired code never reusable (D116); stats and details still 200 after expiry (D117); `TestClock`-driven boundaries | main session |
+| Integration (`*IT`) | Race: expiry between lookup and recording is not counted (held lock) | main session |
+| Cucumber | One scenario per US-016 acceptance criterion (CLAUDE.md) | main session |
+| Regression | The full existing suite passes, with only the listed Done-story test edits | main session |
+
+### 7. Backward-compatible rollout plan
+
+1. **Deploy V3 first.** The column is nullable and every row is `NULL` (never expires). The currently running app is unaffected, because `validate` ignores extra columns.
+2. **Deploy the application.** Existing clients see only two added response fields (`expiresAt: null`, `expired: false`), and every existing request still behaves identically, apart from the previously always-rejected `expiresAt` field.
+3. **Opt in.** Clients start sending `expiresAt` on create or PATCH. Nothing expires until someone sets an expiry.
+4. **Rollback.** Before any expiry has been set, rolling the app back is safe, because the old app ignores the column. After expiries exist, the old app would redirect expired links, which fails open for availability. The column is never dropped (migrations are forward-only).
+
+### 8. Proposed implementation story (US-016), for creation on approval
+
+US-016 "Implement URL expiration" covers §1–§7. It needs a design gate for X1–X6 and the exact V3 SQL. The `depends_on` of US-015 gains US-016, so the final docs are written last.
 
 > Scenario 3 is performed before Scenario 2 because the expiration requirement must be clarified before its impact can be analysed.

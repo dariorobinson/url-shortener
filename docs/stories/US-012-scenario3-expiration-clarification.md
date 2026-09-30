@@ -1,7 +1,7 @@
 ---
 id: US-012
 title: "Scenario 3: clarifying questions for URL expiration"
-status: Open
+status: Done
 plan_task: 10
 depends_on: []
 requirements: [FR-4, FR-9, D14]
@@ -43,8 +43,11 @@ This story is docs-only: it has no Cucumber scenarios or `*IT` tests, since no c
 ## Open questions
 - This entire story's deliverable *is* a set of open questions for the engineer; see AC1. There are no additional open questions about how to run the story itself.
 
+## Resolution
+Delivered by the main session (no agents; engineer direction 2026-09-30). The questions and defaults are in `docs/scenarios.md` (Scenario 3). The engineer accepted all proposed defaults, recorded as D106–D121. No code, migration, entity or API was changed.
+
 ## Design note
-*(architect)*
+*(not applicable: docs-only story)*
 
 ## Implementation notes
 *(mid-engineer: files changed, decisions, items needing human review, test command and result)*

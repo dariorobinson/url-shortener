@@ -1,7 +1,7 @@
 ---
 id: US-013
 title: "Scenario 2: brownfield impact analysis for URL expiration"
-status: Open
+status: Done
 plan_task: 11
 depends_on: [US-012, US-011]
 requirements: [FR-4, FR-9, D14]
@@ -37,8 +37,11 @@ This story is docs-only: it has no Cucumber scenarios or `*IT` tests, since no c
 ## Open questions
 - Blocked until the engineer answers US-012's clarifying questions; if unanswered, this story's status should be set to `Blocked` rather than guessed at.
 
+## Resolution
+Written by the main session (no agents; engineer direction 2026-09-30) into `docs/scenarios.md` (Scenario 2, §1–§8), against shipped commit `f89795f`. It covers AC1 (§1), AC2 (§2), AC3 (§5), AC4 (§5–§6) and AC5 (§7). No code or migration was changed (AC6). Approved by the engineer ("approve all"), with X1–X6 recorded as D122–D127.
+
 ## Design note
-*(architect)*
+*(not applicable: docs-only story)*
 
 ## Implementation notes
 *(mid-engineer: files changed, decisions, items needing human review, test command and result)*
