@@ -7,10 +7,12 @@ import com.schwab.urlshortener.domain.ShortUrl;
 import com.schwab.urlshortener.domain.ShortUrlStatus;
 import com.schwab.urlshortener.support.PostgresErrors;
 import com.schwab.urlshortener.support.RepositoryTest;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Optional;
+import jakarta.persistence.TransactionRequiredException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -18,10 +20,14 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.InvalidDataAccessApiUsageException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * {@code ShortUrlRepository} CRUD, lookup-by-code, and D27 mapping behaviour. AC7, AC8, AC9(a).
@@ -307,5 +313,109 @@ class ShortUrlRepositoryTest {
                 .isEqualTo(ShortUrl.MAX_ACTOR_LENGTH);
         assertThat(queryColumn("char_length(deleted_by)", Integer.class, saved.getId()))
                 .isEqualTo(ShortUrl.MAX_ACTOR_LENGTH);
+    }
+
+    // ---- US-010: the atomic click UPDATE (AC1, AC6; D16, D27, D45, D91)
+
+    private static final Instant CLICK_1 = Instant.parse("2026-03-01T10:15:30.123456Z");
+    private static final Instant CLICK_2 = Instant.parse("2026-03-02T11:16:31.654321Z");
+
+    @Test
+    void shouldNotChangeVersionOrUpdatedAtWhenAClickIsRecorded() {
+        Long id = repository.saveAndFlush(newActive("abc1234", T0)).getId();
+        assertThat(queryColumn("version", Long.class, id)).isEqualTo(0L);
+        assertThat(queryColumn("click_count", Long.class, id)).isEqualTo(0L);
+        assertThat(queryColumn("last_accessed_at", Timestamp.class, id)).isNull();
+
+        int updated = repository.recordClick(id, CLICK_1);
+
+        assertThat(updated).isEqualTo(1);
+        // The write happened: the counter and the time moved...
+        assertThat(queryColumn("click_count", Long.class, id)).isEqualTo(1L);
+        assertThat(queryInstant("last_accessed_at", id)).isEqualTo(CLICK_1);
+        // ...while version and updated_at did not (D16, D27).
+        assertThat(queryColumn("version", Long.class, id)).isEqualTo(0L);
+        assertThat(queryInstant("updated_at", id)).isEqualTo(T0);
+    }
+
+    @Test
+    void shouldIncrementRatherThanSetAndKeepTheLatestInstant() {
+        Long id = repository.saveAndFlush(newActive("abc1234", T0)).getId();
+
+        assertThat(repository.recordClick(id, CLICK_1)).isEqualTo(1);
+        assertThat(repository.recordClick(id, CLICK_2)).isEqualTo(1);
+
+        assertThat(queryColumn("click_count", Long.class, id)).isEqualTo(2L);
+        assertThat(queryInstant("last_accessed_at", id)).isEqualTo(CLICK_2);
+        assertThat(queryColumn("version", Long.class, id)).isEqualTo(0L);
+    }
+
+    @Test
+    void shouldNotCountAClickOnADeactivatedOrDeletedRowOrAnUnknownId() {
+        Long active = repository.saveAndFlush(newActive("act1234", T0)).getId();
+        Long deactivated = repository.saveAndFlush(newActive("dea1234", T0)).getId();
+        Long deleted = repository.saveAndFlush(newActive("del1234", T0)).getId();
+        jdbcTemplate.update("UPDATE short_url SET status = 'DEACTIVATED' WHERE id = ?", deactivated);
+        jdbcTemplate.update("UPDATE short_url SET status = 'DELETED', deleted_at = now(), deleted_by = 'admin'"
+                + " WHERE id = ?", deleted);
+
+        // Positive control: the ACTIVE row is counted by the same statement.
+        assertThat(repository.recordClick(active, CLICK_1)).isEqualTo(1);
+        assertThat(repository.recordClick(deactivated, CLICK_1)).isZero();
+        assertThat(repository.recordClick(deleted, CLICK_1)).isZero();
+        assertThat(repository.recordClick(Long.MAX_VALUE, CLICK_1)).isZero();
+
+        assertThat(queryColumn("click_count", Long.class, active)).isEqualTo(1L);
+        for (Long id : new Long[] {deactivated, deleted}) {
+            assertThat(queryColumn("click_count", Long.class, id)).isEqualTo(0L);
+            assertThat(queryColumn("last_accessed_at", Timestamp.class, id)).isNull();
+            assertThat(queryColumn("version", Long.class, id)).isEqualTo(0L);
+        }
+    }
+
+    @Test
+    void shouldNotServeAStaleEntityAfterRecordingAClick() {
+        Long id = repository.saveAndFlush(newActive("abc1234", T0)).getId();
+        testEntityManager.clear();
+        ShortUrl loaded = repository.findById(id).orElseThrow();
+        assertThat(testEntityManager.getEntityManager().contains(loaded)).isTrue();
+        assertThat(loaded.getClickCount()).isZero();
+
+        assertThat(repository.recordClick(id, CLICK_1)).isEqualTo(1);
+
+        assertThat(testEntityManager.getEntityManager().contains(loaded)).isFalse();
+        ShortUrl reloaded = repository.findById(id).orElseThrow();
+        assertThat(reloaded).isNotSameAs(loaded);
+        assertThat(reloaded.getClickCount()).isEqualTo(1L);
+        assertThat(reloaded.getLastAccessedAt()).isEqualTo(CLICK_1);
+    }
+
+    @Test
+    void shouldLetTheStatusGuardSeeAPendingDeactivation() {
+        // Checked with flushAutomatically removed: this test still passes, because Hibernate flushes pending changes
+        // before a native query in a transaction. So it proves the guard behaviour, not the flag; the flag itself is
+        // pinned by RepositoryAnnotationsTest.
+        Long id = repository.saveAndFlush(newActive("abc1234", T0)).getId();
+        testEntityManager.clear();
+        ShortUrl loaded = repository.findById(id).orElseThrow();
+        loaded.deactivate(T2);   // pending: not flushed yet
+
+        int updated = repository.recordClick(id, CLICK_1);
+
+        // The pending deactivation was flushed first, so the status guard saw it (D91), and the clear did not lose it.
+        assertThat(updated).isZero();
+        assertThat(queryColumn("status", String.class, id)).isEqualTo("DEACTIVATED");
+        assertThat(queryColumn("version", Long.class, id)).isEqualTo(1L);
+        assertThat(queryColumn("click_count", Long.class, id)).isEqualTo(0L);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void shouldRefuseToRunTheClickUpdateOutsideATransaction() {
+        assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+
+        assertThatThrownBy(() -> repository.recordClick(1L, CLICK_1))
+                .isInstanceOf(InvalidDataAccessApiUsageException.class)
+                .hasRootCauseInstanceOf(TransactionRequiredException.class);
     }
 }

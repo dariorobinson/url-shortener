@@ -17,8 +17,10 @@ import org.springframework.context.annotation.Configuration;
  * change create ({@code alias} or {@code originalUrl} given as JSON numbers), so it is not used. A per-type
  * {@code CoercionConfig} touches no other type, and serialization does not consult coercion at all.
  *
- * <p>Every input shape that the Boolean deserializers consult is set to {@code Fail}: a string (including
- * {@code "true"}/{@code "false"}) and an empty string, an integer, a float, and an array or empty array. A JSON
+ * <p>Every input shape is set to {@code Fail}. The shapes Jackson consults for {@code Boolean} are
+ * {@code String} (including {@code "true"}/{@code "false"}), {@code EmptyString}, {@code Integer} and
+ * {@code EmptyArray}. {@code Float} and {@code Array} are set only as a precaution: the Boolean deserializers do
+ * not consult them today, and failing them keeps a future Jackson version from coercing them silently. A JSON
  * {@code null} is not a coercion, so it still reaches {@code @NotNull} as VALIDATION_FAILED.
  */
 @Configuration(proxyBeanMethods = false)

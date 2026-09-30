@@ -496,7 +496,8 @@ class ShortUrlServiceTest {
     private static final Caller ADMIN = new Caller("admin", true);
 
     private ShortUrl stored(String code, String owner, ShortUrlStatus status) {
-        ShortUrl url = ShortUrl.create(code, URL, false, owner, NOW_MICROS);
+        // Created at an earlier instant than the fake clock's, so "updatedAt unchanged" can fail for ACTIVE rows too.
+        ShortUrl url = ShortUrl.create(code, URL, false, owner, EARLIER);
         if (status == ShortUrlStatus.DEACTIVATED) {
             url.deactivate(EARLIER);
         } else if (status == ShortUrlStatus.DELETED) {
@@ -521,7 +522,7 @@ class ShortUrlServiceTest {
         assertThat(view.shortCode()).isEqualTo("Abc1234");
         assertThat(view.status()).isEqualTo(status);
         assertThat(view.originalUrl()).isEqualTo(URL);
-        assertThat(view.createdAt()).isEqualTo(NOW_MICROS);
+        assertThat(view.createdAt()).isEqualTo(EARLIER);
         assertThat(view.clickCount()).isZero();
         assertThat(view.lastAccessedAt()).isNull();
         verify(repository, times(1)).findByShortCode("Abc1234");

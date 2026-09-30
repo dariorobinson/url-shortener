@@ -5,6 +5,7 @@ import static com.schwab.urlshortener.support.TestUsers.ALICE_PASSWORD;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -109,7 +110,7 @@ class RedirectControllerWebMvcTest {
 
     @Test
     void shouldReturn302WithTheExactLocationAndNoStoreForAnonymousGet() throws Exception {
-        when(service.resolve(CODE)).thenReturn(TARGET);
+        when(service.resolveAndRecordClick(CODE)).thenReturn(TARGET);
 
         assertExact302(mockMvc.perform(get(PATH)).andReturn(), TARGET);
     }
@@ -123,7 +124,7 @@ class RedirectControllerWebMvcTest {
 
     @Test
     void shouldPercentEncodeNonAsciiCharactersInTheLocationHeader() throws Exception {
-        when(service.resolve(CODE)).thenReturn("https://example.com/café?q=中#😀");
+        when(service.resolveAndRecordClick(CODE)).thenReturn("https://example.com/café?q=中#😀");
 
         assertExact302(mockMvc.perform(get(PATH)).andReturn(),
                 "https://example.com/caf%C3%A9?q=%E4%B8%AD#%F0%9F%98%80");
@@ -131,19 +132,41 @@ class RedirectControllerWebMvcTest {
 
     @Test
     void shouldReturn302ForAValidAuthenticatedCallerToo() throws Exception {
-        when(service.resolve(CODE)).thenReturn(TARGET);
+        when(service.resolveAndRecordClick(CODE)).thenReturn(TARGET);
 
         assertExact302(mockMvc.perform(get(PATH).with(httpBasic(ALICE, ALICE_PASSWORD))).andReturn(), TARGET);
+    }
+
+    // ---- AC2, D9: GET counts, HEAD never does, through real Spring HEAD routing
+
+    @Test
+    void shouldCallOnlyResolveAndRecordClickForGet() throws Exception {
+        when(service.resolveAndRecordClick(CODE)).thenReturn(TARGET);
+
+        assertExact302(mockMvc.perform(get(PATH)).andReturn(), TARGET);
+
+        verify(service, times(1)).resolveAndRecordClick(CODE);
+        verify(service, never()).resolve(any());
+    }
+
+    @Test
+    void shouldCallOnlyResolveForHeadAndNeverRecordAClick() throws Exception {
+        when(service.resolve(CODE)).thenReturn(TARGET);
+
+        assertExact302(mockMvc.perform(head(PATH)).andReturn(), TARGET);
+
+        verify(service, times(1)).resolve(CODE);
+        verify(service, never()).resolveAndRecordClick(any());
     }
 
     // ---- AC8, D79
 
     @Test
     void shouldIgnoreTheQueryStringOfTheShortLink() throws Exception {
-        when(service.resolve(CODE)).thenReturn("https://example.com/target");
+        when(service.resolveAndRecordClick(CODE)).thenReturn("https://example.com/target");
 
         assertExact302(mockMvc.perform(get(PATH + "?x=1&y=2")).andReturn(), "https://example.com/target");
-        verify(service).resolve(CODE);
+        verify(service).resolveAndRecordClick(CODE);
     }
 
     // ---- D70: any Accept gets the 302
@@ -152,6 +175,7 @@ class RedirectControllerWebMvcTest {
     @ValueSource(strings = {"text/html", "image/png", "application/xml", "*/*", "application/json",
             "application/problem+json", "foo"})
     void shouldReturn302ForAnyAcceptHeaderOnGetAndHead(String accept) throws Exception {
+        when(service.resolveAndRecordClick(CODE)).thenReturn(TARGET);
         when(service.resolve(CODE)).thenReturn(TARGET);
 
         assertExact302(mockMvc.perform(get(PATH).header(HttpHeaders.ACCEPT, accept)).andReturn(), TARGET);
@@ -162,7 +186,7 @@ class RedirectControllerWebMvcTest {
 
     @Test
     void shouldReturn404ProblemJsonWithSecurityDefaultCacheControlWhenTheServiceThrowsNotFound() throws Exception {
-        when(service.resolve(CODE)).thenThrow(new ShortUrlNotFoundException());
+        when(service.resolveAndRecordClick(CODE)).thenThrow(new ShortUrlNotFoundException());
 
         MvcResult result = mockMvc.perform(get(PATH)).andReturn();
 
@@ -175,27 +199,27 @@ class RedirectControllerWebMvcTest {
     @ValueSource(strings = {"text/html", "image/png", "application/xml", "*/*", "application/json",
             "application/problem+json"})
     void shouldReturn404ProblemJsonForEveryParseableAcceptNeverNotAcceptable(String accept) throws Exception {
-        when(service.resolve(CODE)).thenThrow(new ShortUrlNotFoundException());
+        when(service.resolveAndRecordClick(CODE)).thenThrow(new ShortUrlNotFoundException());
 
         assertNotFoundProblem(mockMvc.perform(get(PATH).header(HttpHeaders.ACCEPT, accept)).andReturn(), PATH);
     }
 
     @Test
     void shouldReturn404ProblemJsonWhenNoAcceptHeaderIsSent() throws Exception {
-        when(service.resolve(CODE)).thenThrow(new ShortUrlNotFoundException());
+        when(service.resolveAndRecordClick(CODE)).thenThrow(new ShortUrlNotFoundException());
 
         assertNotFoundProblem(mockMvc.perform(get(PATH)).andReturn(), PATH);
     }
 
     @Test
     void shouldReturn404WithAnEmptyBodyForAnUnparseableAccept() throws Exception {
-        when(service.resolve(CODE)).thenThrow(new ShortUrlNotFoundException());
+        when(service.resolveAndRecordClick(CODE)).thenThrow(new ShortUrlNotFoundException());
 
         MvcResult result = mockMvc.perform(get(PATH).header(HttpHeaders.ACCEPT, "foo")).andReturn();
 
         assertThat(result.getResponse().getStatus()).isEqualTo(404);
         assertThat(result.getResponse().getContentAsByteArray()).isEmpty();
-        verify(service).resolve(CODE);
+        verify(service).resolveAndRecordClick(CODE);
     }
 
     @Test
@@ -212,14 +236,14 @@ class RedirectControllerWebMvcTest {
 
     @Test
     void shouldPassEveryMalformedSingleSegmentToTheServiceAndReturnItsNotFound() throws Exception {
-        when(service.resolve(any())).thenThrow(new ShortUrlNotFoundException());
+        when(service.resolveAndRecordClick(any())).thenThrow(new ShortUrlNotFoundException());
 
         assertNotFoundProblem(mockMvc.perform(get("/ab")).andReturn(), "/ab");
         assertNotFoundProblem(mockMvc.perform(get("/a_b")).andReturn(), "/a_b");
         assertNotFoundProblem(mockMvc.perform(get("/favicon.ico")).andReturn(), "/favicon.ico");
-        verify(service).resolve("ab");
-        verify(service).resolve("a_b");
-        verify(service).resolve("favicon.ico");
+        verify(service).resolveAndRecordClick("ab");
+        verify(service).resolveAndRecordClick("a_b");
+        verify(service).resolveAndRecordClick("favicon.ico");
     }
 
     // ---- AC5: bare /api for an authenticated caller reaches the mapping (D78); anonymous never does
@@ -234,7 +258,7 @@ class RedirectControllerWebMvcTest {
 
     @Test
     void shouldReturn404ShortUrlNotFoundForAuthenticatedApiNeverA302() throws Exception {
-        when(service.resolve("api")).thenThrow(new ShortUrlNotFoundException());
+        when(service.resolveAndRecordClick("api")).thenThrow(new ShortUrlNotFoundException());
 
         assertNotFoundProblem(mockMvc.perform(get("/api").with(httpBasic(ALICE, ALICE_PASSWORD))).andReturn(), "/api");
     }
@@ -273,7 +297,8 @@ class RedirectControllerWebMvcTest {
     @Test
     void shouldReturn500LogOnceAtErrorAndNeverLogTheTargetWhenTheDatabaseFails(CapturedOutput output)
             throws Exception {
-        when(service.resolve(CODE)).thenThrow(new DataAccessResourceFailureException("db down marker-secret"));
+        when(service.resolveAndRecordClick(CODE))
+                .thenThrow(new DataAccessResourceFailureException("db down marker-secret"));
 
         MockHttpServletRequestBuilder request = get(PATH);
         MvcResult result = mockMvc.perform(request).andExpect(status().isInternalServerError())

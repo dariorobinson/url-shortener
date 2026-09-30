@@ -51,7 +51,8 @@ class NoTransactionalAnnotationIT extends IntegrationTestBase {
         }
 
         // Non-vacuous: the beans that own transactions were in the scanned set.
-        assertThat(scanned).contains("ShortUrlService", "RedirectService", "ShortUrlController");
+        assertThat(scanned).contains("ShortUrlService", "RedirectService", "ShortUrlController",
+                "JpaClickRecorder");
         assertThat(offenders).isEmpty();
     }
 

@@ -4,7 +4,7 @@ title: Statistics API
 status: Open
 plan_task: 9
 depends_on: [US-005, US-007, US-010]
-requirements: [FR-5, FR-12, D8, D10, D19, D31]
+requirements: [FR-5, FR-12, D8, D10, D19, D31, D94]
 requires_design_approval: true
 ---
 
@@ -49,6 +49,21 @@ As the owner of a short URL (or an ADMIN), I want to see total clicks and a per-
 - The `from`/`to` query parameter semantics referenced in `docs/architecture.md`'s REST table are still not specified: defaults when omitted (all-time? last 30 days?), a maximum allowed range, and the expected date/date-time format. Needs an engineer decision.
 - The response JSON shape (field names, whether the daily breakdown is an array of `{date, count}` objects or a map keyed by date) is still not specified — D19 only settles that zero-click days appear with `count: 0` rather than being omitted; the surrounding shape (field names, array vs. map) needs an engineer decision at the design gate.
 - D31's `ErrorCode` catalogue has no entry specific to an invalid timezone. AC3 proposes reusing `VALIDATION_FAILED`. Needs engineer confirmation: either accept `VALIDATION_FAILED`, or add a dedicated `INVALID_TIMEZONE` code to the D31 catalogue (which would also require revisiting US-005, where the catalogue was ratified).
+
+## Carry-over from US-010 (engineer-approved at US-010 G3)
+- **R4 (SHOULD, mid-engineer):** `PostgresServerErrors.sqlState` falls back to the first `java.sql.SQLException.getSQLState()` in the cause chain when there is no `ServerErrorMessage`, so a lost connection logs `08006` instead of `none`. `isUniqueViolation` stays server-message-only. Tests:
+  - Split `PostgresServerErrorsTest`'s "empty sqlState for null, no PSQLException or no server message" test into "empty for null or no `SQLException`" and "falls back to the client SQLSTATE". Add a plain `SQLException` case wrapped by Spring.
+  - `RedirectServiceTest`: add a fail-open variant, for example `CannotCreateTransactionException` wrapping `PSQLException(CONNECTION_FAILURE)`, that expects `sqlState=08006`.
+  - Add a regression test: `isUniqueViolation` is false for a client-side `PSQLException` whose state is `23505`.
+- **R9 / D94 (low priority, mid-engineer):**
+  - Change `ShortUrlRepository.RECORD_CLICK_SQL` to `last_accessed_at = GREATEST(last_accessed_at, :clickedAt)`.
+  - Update the pinned literal in `RepositoryAnnotationsTest`.
+  - Add `ShortUrlRepositoryTest.shouldNotMoveLastAccessedAtBackwards`: record clicks in reverse time order and check the count is 2 and `last_accessed_at` is the later instant.
+  - Reword US-010 AC1 to "the latest click time", and list every US-010 test change one by one in US-010's Post-completion section. US-010 is a Done story.
+- **N1 (NIT):** wrap `ShortUrlTestData.java:10` (qa-tester).
+- **N2 (NIT):** fix the lowercase sentence starts and the long line in `ClickRecordingConcurrencyIT:42-44` (qa-tester).
+- **N4 (NIT):** add a positive control to `RepositoryAnnotationsTest`, showing the `isTransactional` detector returns true for a directly annotated sample and for one using a composed `@Transactional` (mid-engineer).
+- **N5 (NIT, optional):** consolidate or rename the three older private `stableHeaders` helpers in `GetShortUrlIT`, `RedirectIT` and `RedirectSteps` (qa-tester).
 
 ## Design note
 *(architect)*

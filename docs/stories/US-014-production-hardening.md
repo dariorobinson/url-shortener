@@ -62,6 +62,10 @@ As an engineer, I want request tracing, security headers, a hardened container i
 
 - **Actuator links page (US-008 review):** an authenticated `GET /actuator` (the discovery links page) returns 200 to any USER. Either set `management.endpoints.web.discovery.enabled: false`, or require `hasRole(ADMIN)` on the exact `/actuator` path. With discovery off, an authenticated `/actuator` reaches `/{code}` and gets 404 (the D83 gap).
 - **HEAD on health (US-008 QA):** anonymous `HEAD /actuator/health` returns 401, because rule 2 permits GET only. Decide whether to permit HEAD, or keep requiring probes to use GET (already noted above).
+## Carry-over from US-010 (engineer-approved at US-010 G2)
+- **Fail-open latency under connection-pool exhaustion:** if the Hikari pool is exhausted, a redirect can wait up to the 30-second connection timeout before click recording fails open (D12, D93). Review the pool size and `connection-timeout` during hardening. A shorter timeout for the recorder is one option.
+- **Lost-click metric (deferred from US-010, Q4):** add a Micrometer counter for clicks lost to fail-open. Only do this once a metrics endpoint is exposed; today actuator exposes only `health`.
+
 ## Design note
 *(architect)*
 

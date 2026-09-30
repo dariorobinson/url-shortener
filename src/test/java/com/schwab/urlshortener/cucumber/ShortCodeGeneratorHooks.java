@@ -10,7 +10,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 /**
  * Runs for every scenario of every feature: clears the scripted generator's queue and call count
  * before and after (so no feature can inherit a queue, even if an earlier scenario failed midway),
- * and truncates {@code short_url} before each scenario. HTTP requests run on server threads
+ * and truncates {@code short_url} and {@code click_event} before each scenario. HTTP requests run on server threads
  * outside any test transaction, so table truncation, not rollback, isolates scenarios.
  */
 public class ShortCodeGeneratorHooks {

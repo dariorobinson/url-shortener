@@ -683,3 +683,6 @@ Round 2:
 **Fix round 2 (engineer-approved, R5 only):** the qa-tester relaxed the HEAD pin to "if `Content-Length` is present, it equals the GET body's byte length". A comment records today's behaviour (no `Content-Length` on embedded Tomcat, Boot 3.5.16).
 
 **Orchestrator final verification (2026-09-29):** `./mvnw -q clean verify` passed (exit 0). Surefire: 605 run, 0 failed. Failsafe: 310 run, 0 failed (includes 95 Cucumber scenarios). Merged LINE coverage: 414/416. The build log has 0 "Failing row contains" lines. G3 was approved by the engineer. Status: **Done**.
+
+## Post-completion change (US-010 carry-over N1; mid-engineer, fix round 1)
+- `service/ShortUrlServiceTest`: the `stored` fixture now creates the entity at `EARLIER` instead of `NOW_MICROS`, so "updatedAt unchanged" assertions on ACTIVE rows can fail. The only US-007 test that reads the creation time is `shouldReturnTheViewToTheOwnerForActiveAndDeactivatedLinks`, whose `createdAt` assertion changes from `NOW_MICROS` to `EARLIER`. The other `stored` users (`shouldReturnAnotherUsersLinkToAnAdminForActiveAndDeactivatedLinks`, `shouldThrowNotFoundForANonOwnerUserOnActiveAndDeactivatedLinks`) assert nothing time-dependent and are unchanged. Status stays **Done**.

@@ -1,6 +1,6 @@
 # Requirements
 
-Last updated: 2026-09-30 (G2 US-009, D86–D90). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
+Last updated: 2026-09-30 (G3 US-010, D94). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
 
 ## Functional requirements
 
@@ -125,6 +125,10 @@ Last updated: 2026-09-30 (G2 US-009, D86–D90). Decisions below were made by th
 | D88 | PATCH media type | PATCH accepts `application/json` only. `application/merge-patch+json` and other types get `415 UNSUPPORTED_MEDIA_TYPE`. |
 | D89 | Strict booleans | Jackson's scalar coercion is **disabled for the Boolean type**. Only real JSON `true`/`false` are accepted; `"false"`, `0` and `1` get `400 MALFORMED_REQUEST`. A missing or `null` `active` gets `400 VALIDATION_FAILED` (`@NotNull`). The setting is scoped to Boolean and does not change create (no boolean inputs) or responses. |
 | D90 | Click data in the PATCH response | The PATCH 200 body shows click data as read inside the PATCH transaction. A click that lands during the PATCH appears on the next GET. |
+| D91 | Clicks on links that change state mid-redirect | A click is recorded only if the link is still `ACTIVE` when the click UPDATE runs (`WHERE status = 'ACTIVE'`). If the link was deactivated or deleted after it resolved, the 302 is still served, but no counter change and no `click_event` row are written. |
+| D92 | `click_event.clicked_at` default | It keeps `DEFAULT now()` for raw SQL inserts only. The application always supplies `clicked_at` from the injected Clock, truncated to microseconds (D45). |
+| D93 | Where fail-open lives | Click-recording failures are caught in `RedirectService` (D12), not in a decorator bean, so no replacement `ClickRecorder` can remove fail-open. The failure is logged at WARN with the code, id, exception class and SQLSTATE only: never the exception message, the stack trace or the URL. |
+| D94 | `last_accessed_at` never moves backwards | The click UPDATE sets `last_accessed_at = GREATEST(last_accessed_at, :clickedAt)`, so it always equals the latest `click_event.clicked_at` even when clicks commit out of order. PostgreSQL's `GREATEST` ignores NULL, so the first click still sets it. **To be implemented in US-011** (carry-over from US-010 R9). US-010's AC1 is reworded to "the latest click time" at the same point. |
 
 ## Environment and platform decisions
 

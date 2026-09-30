@@ -536,21 +536,31 @@ class RedirectIT extends IntegrationTestBase {
     // ---- Reads write nothing ----
 
     @Test
-    void shouldWriteNothingOnGetOrHead() throws Exception {
+    void shouldWriteNothingOnHeadWhileTheSamePathGetIsCounted() throws Exception {
         data.seed(ACTIVE_CODE, "ACTIVE", "https://example.com/readonly");
         Map<String, Object> before = data.rowState(ACTIVE_CODE);
-        List<Integer> statuses = new ArrayList<>();
 
-        for (String method : List.of("GET", "HEAD", "GET", "HEAD")) {
-            statuses.add(call(method, "/" + ACTIVE_CODE).statusCode());
+        List<Integer> headStatuses = new ArrayList<>();
+        for (int i = 0; i < 2; i++) {
+            headStatuses.add(call("HEAD", "/" + ACTIVE_CODE).statusCode());
         }
 
-        // Non-vacuity: every request reached the redirect (302), so the handler really ran.
-        assertThat(statuses).containsExactly(302, 302, 302, 302);
+        // Non-vacuity: both HEADs reached the redirect (302), so the handler really ran, and wrote nothing.
+        assertThat(headStatuses).containsExactly(302, 302);
         assertThat(data.rowState(ACTIVE_CODE)).isEqualTo(before);
-        // Positive control: the same comparison does detect a write.
-        data.seedClicks(ACTIVE_CODE, 1, Instant.parse("2026-03-01T10:15:30Z"));
-        assertThat(data.rowState(ACTIVE_CODE)).isNotEqualTo(before);
+        assertThat(data.clickEventCount(ACTIVE_CODE)).isZero();
+
+        // Positive control on the same path: GET is counted (D9), but version and updated_at never move (D16, D27).
+        assertThat(call("GET", "/" + ACTIVE_CODE).statusCode()).isEqualTo(302);
+        Map<String, Object> after = data.rowState(ACTIVE_CODE);
+        assertThat(after).isNotEqualTo(before);
+        assertThat(((Number) after.get("click_count")).longValue()).isEqualTo(1);
+        assertThat(after.get("last_accessed_at")).isNotNull();
+        assertThat(data.clickEventCount(ACTIVE_CODE)).isEqualTo(1);
+        assertThat(after.get("version")).isEqualTo(before.get("version"));
+        assertThat(after.get("updated_at")).isEqualTo(before.get("updated_at"));
+        assertThat(after.get("created_at")).isEqualTo(before.get("created_at"));
+        assertThat(after.get("status")).isEqualTo(before.get("status"));
     }
 
     // ---- AC5, D78: routing precedence ----

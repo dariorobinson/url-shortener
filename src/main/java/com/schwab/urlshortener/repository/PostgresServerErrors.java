@@ -37,6 +37,14 @@ public final class PostgresServerErrors {
     }
 
     /**
+     * @return the SQLSTATE of the first {@link PSQLException} in the cause chain, or empty if there is none or it
+     *         carries no server message
+     */
+    public static Optional<String> sqlState(Throwable t) {
+        return serverError(t).map(ServerErrorMessage::getSQLState);
+    }
+
+    /**
      * @return true only for SQLSTATE {@value #UNIQUE_VIOLATION} on exactly the named constraint
      * @throws NullPointerException if {@code constraintName} is null
      */

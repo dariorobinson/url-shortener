@@ -105,6 +105,10 @@ Base package: `com.schwab.urlshortener`. `JAVA_HOME` must point to JDK 25.
 - Every `@WebMvcTest` imports `SecuritySliceTestConfiguration`, so it gets the real security filter chain and production Jackson settings (D89); slices never import `SecurityConfig`, `UserAccountsConfig`, or `JacksonConfig` individually.
 - A "value is never logged" assertion checks every form the value takes on the way out: raw and encoded (e.g. D75 percent-encoding).
 - Test fixtures that seed prior state (transitions, audit fields) use a timestamp and actor different from those the code under test will write, so "unchanged" assertions can fail.
+- Test code that creates shared database objects (triggers, functions, roles) defines the DDL and its cleanup once, in shared test support; every user calls that single definition.
+- Comments and Javadoc don't use design-note test labels (`R1`, `§9.2`-style) as identifiers — describe the scenario and cite `Dnn` (extends the durable-ID rule).
+- A runtime test that claims to prove a specific annotation flag (e.g. `flushAutomatically`) is shown to fail without that flag, or is named for the behaviour it actually proves.
+- Every reflection-based "no annotation X" guard includes a positive control proving its detector returns true for a directly annotated sample and for a composed-annotation sample.
 
 ## Post-task report (required at every story completion)
 

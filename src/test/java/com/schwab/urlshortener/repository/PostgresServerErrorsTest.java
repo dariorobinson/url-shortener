@@ -3,6 +3,8 @@ package com.schwab.urlshortener.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.sql.SQLException;
+import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.Test;
 import org.postgresql.util.PSQLException;
 import org.postgresql.util.PSQLState;
@@ -40,8 +42,8 @@ class PostgresServerErrorsTest {
     @Test
     void shouldFindThePsqlExceptionThroughSpringAndHibernateWrappers() {
         // Spring DataIntegrityViolationException -> Hibernate ConstraintViolationException -> PSQLException
-        Throwable hibernate = new org.hibernate.exception.ConstraintViolationException(
-                "wrapped", new java.sql.SQLException("wrapped", psql("23505", UNIQUE)), UNIQUE);
+        Throwable hibernate = new ConstraintViolationException(
+                "wrapped", new SQLException("wrapped", psql("23505", UNIQUE)), UNIQUE);
         DataIntegrityViolationException spring = new DataIntegrityViolationException("wrapped", hibernate);
 
         assertThat(PostgresServerErrors.isUniqueViolation(spring, UNIQUE)).isTrue();
@@ -89,5 +91,29 @@ class PostgresServerErrorsTest {
     void shouldRejectANullConstraintName() {
         assertThatThrownBy(() -> PostgresServerErrors.isUniqueViolation(psql("23505", UNIQUE), null))
                 .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void shouldReadTheSqlStateFromADirectPsqlException() {
+        assertThat(PostgresServerErrors.sqlState(psql("P0001", "c"))).contains("P0001");
+    }
+
+    @Test
+    void shouldReadTheSqlStateThroughSpringAndHibernateWrappers() {
+        Throwable hibernate = new ConstraintViolationException(
+                "wrapped", new SQLException("wrapped", psql("23503", "fk_x")), "fk_x");
+
+        assertThat(PostgresServerErrors.sqlState(new DataIntegrityViolationException("wrapped", hibernate)))
+                .contains("23503");
+    }
+
+    @Test
+    void shouldReturnAnEmptySqlStateForNullNoPsqlExceptionOrNoServerMessage() {
+        assertThat(PostgresServerErrors.sqlState(null)).isEmpty();
+        assertThat(PostgresServerErrors.sqlState(new RuntimeException("plain", new IllegalStateException()))).isEmpty();
+        assertThat(PostgresServerErrors.sqlState(new PSQLException("client side", PSQLState.UNEXPECTED_ERROR)))
+                .isEmpty();
+        // Positive control: the same helper does find a state when one exists.
+        assertThat(PostgresServerErrors.sqlState(psql("23505", "c"))).isPresent();
     }
 }

@@ -10,7 +10,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
 
@@ -122,5 +125,16 @@ public final class ApiClient {
         Set<String> keys = new TreeSet<>();
         node.fieldNames().forEachRemaining(keys::add);
         return keys;
+    }
+
+    /** Headers except Date and Content-Length (HEAD carries none), keyed case-insensitively. */
+    public static Map<String, List<String>> stableHeaders(HttpResponse<String> response) {
+        Map<String, List<String>> headers = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        response.headers().map().forEach((name, values) -> {
+            if (!"date".equalsIgnoreCase(name) && !"content-length".equalsIgnoreCase(name)) {
+                headers.put(name, values);
+            }
+        });
+        return headers;
     }
 }

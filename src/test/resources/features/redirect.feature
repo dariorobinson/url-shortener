@@ -157,10 +157,12 @@ Feature: Follow a short link
     Then the redirect response status is 302
     And the redirect response location is exactly "https://example.com/bobs"
 
-  # Reads write nothing (until click counting in US-010)
-  Scenario: Following a link changes nothing in the stored row
+  # HEAD writes nothing (D9); the same-path GET is counted (US-010), and never touches version or updated_at
+  Scenario: Sending HEAD for a link changes nothing in the stored row, while a GET is counted
     Given alice owns a short URL "Active07" for "https://example.com/readonly" with status "ACTIVE"
     And the stored row of "Active07" is noted
-    When an anonymous visitor follows the short link "Active07"
+    When an anonymous visitor sends HEAD for the short link "Active07"
     And an anonymous visitor sends HEAD for the short link "Active07"
     Then the stored row of "Active07" is unchanged after the redirects
+    When an anonymous visitor follows the short link "Active07"
+    Then the stored row of "Active07" has 1 click and an unchanged version and update time

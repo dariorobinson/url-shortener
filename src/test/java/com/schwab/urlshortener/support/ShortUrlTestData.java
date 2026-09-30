@@ -2,11 +2,12 @@ package com.schwab.urlshortener.support;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
- * Arranges and inspects {@code short_url} rows for integration tests when the API cannot express
+ * Arranges and inspects {@code short_url} and {@code click_event} rows for integration tests when the API cannot express
  * it (seeding colliding rows, counting rows by marker). Rows seeded here are owned by
  * {@value #SEED_OWNER}. Not a Spring bean: construct it with the context's {@link JdbcTemplate}.
  */
@@ -26,7 +27,35 @@ public final class ShortUrlTestData {
      * parallel execution means revisiting truncation and the seam together.
      */
     public void truncate() {
-        jdbc.execute("TRUNCATE TABLE short_url");
+        jdbc.execute("TRUNCATE TABLE click_event, short_url");
+    }
+
+    /**
+     * Makes every click_event INSERT fail with a PL/pgSQL trigger whose message carries the stored URL, so a
+     * log that leaked exception messages would show it. Drop with {@link #dropClickFailures()}.
+     */
+    public void failClickInserts() {
+        jdbc.execute("CREATE FUNCTION test_fail_click_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN"
+                + " RAISE EXCEPTION 'injected click failure for %',"
+                + " (SELECT original_url FROM short_url WHERE id = NEW.short_url_id); END $$");
+        jdbc.execute("CREATE TRIGGER test_fail_click BEFORE INSERT ON click_event FOR EACH ROW"
+                + " EXECUTE FUNCTION test_fail_click_insert()");
+    }
+
+    /** Makes every short_url click_count UPDATE fail, with the stored URL in the message. */
+    public void failClickUpdates() {
+        jdbc.execute("CREATE FUNCTION test_fail_click_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN"
+                + " RAISE EXCEPTION 'injected click failure for %', NEW.original_url; END $$");
+        jdbc.execute("CREATE TRIGGER test_fail_click BEFORE UPDATE OF click_count ON short_url FOR EACH ROW"
+                + " EXECUTE FUNCTION test_fail_click_update()");
+    }
+
+    /** Removes either injected failure; safe to call when none exists. */
+    public void dropClickFailures() {
+        jdbc.execute("DROP TRIGGER IF EXISTS test_fail_click ON click_event");
+        jdbc.execute("DROP TRIGGER IF EXISTS test_fail_click ON short_url");
+        jdbc.execute("DROP FUNCTION IF EXISTS test_fail_click_insert()");
+        jdbc.execute("DROP FUNCTION IF EXISTS test_fail_click_update()");
     }
 
     public void seed(String code, String status) {
@@ -104,6 +133,28 @@ public final class ShortUrlTestData {
                         rs.getString("status"), rs.getLong("version"), instant(rs.getTimestamp("updated_at")),
                         instant(rs.getTimestamp("deleted_at")), rs.getString("deleted_by"),
                         rs.getLong("click_count"), instant(rs.getTimestamp("last_accessed_at"))), code);
+    }
+
+    public long shortUrlId(String code) {
+        return jdbc.queryForObject("SELECT id FROM short_url WHERE short_code = ?", Long.class, code);
+    }
+
+    /** Number of click_event rows of the link with this code. */
+    public int clickEventCount(String code) {
+        return count("SELECT count(*) FROM click_event e JOIN short_url s ON s.id = e.short_url_id"
+                + " WHERE s.short_code = ?", code);
+    }
+
+    /** Number of click_event rows in the whole table. */
+    public int clickEventCount() {
+        return count("SELECT count(*) FROM click_event");
+    }
+
+    /** The clicked_at values of the link's events, ordered ascending, at the database's microsecond precision. */
+    public List<Instant> clickedAts(String code) {
+        return jdbc.query("SELECT e.clicked_at FROM click_event e JOIN short_url s ON s.id = e.short_url_id"
+                + " WHERE s.short_code = ? ORDER BY e.clicked_at, e.id",
+                (rs, row) -> rs.getTimestamp(1).toInstant(), code);
     }
 
     public int rowCount() {

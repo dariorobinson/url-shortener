@@ -917,5 +917,103 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
 
 - **Date:** 2026-09-30
 - **Task:** Commit C5b: US-009, its docs (D86–D90, the US-004 test-by-test note, the US-010 carry-over and design inputs, the expiration placeholder pointer), and the three `CLAUDE.md` review rules from US-009.
+- **Engineer decision:** "approve all" (relayed). **Accepted:** commit C5b exactly as staged. **Committed as `e14f590`** (parent `2ef7a20`, 39 files). The main session verifies and pushes (engineer-approved). Placing the controllable test Clock in US-010, not US-012, is **Accepted**.
+- **Independent verification by the main session, before approval:** it re-verified the staging: 39 files, nothing unstaged, no forbidden files, 3 new `CLAUDE.md` rules, HEAD `2ef7a20`.
+- **Validation:** the working tree was clean after the commit.
+- **Rationale:** *(engineer to add)*
+
+## Entry 29 — US-010 click recording (design)
+
+- **Date:** 2026-09-30
+- **Task:** Architect design note for US-010. The story requires design approval, so it stops at G2.
+- **Inputs:**
+  - The V2 `click_event` migration.
+  - An atomic click UPDATE that never touches `version` or `updated_at` (D16, D27), with the time truncated to microseconds.
+  - GET-only counting (D9, D18).
+  - A fail-open boundary (D12).
+  - The US-008 seam, with the redirect contract unchanged.
+  - `ClickRecorder`, designed so a Kafka/SQS implementation can replace it later.
+  - A guard for the repository-interface `@Modifying` method.
+  - The controllable test Clock, and who owns it.
+  - The stats index for US-011.
+  - The N1/N2 carry-over.
+- **AI recommendation (architect):**
+  - **V2 migration:** `click_event` with three columns (D8), `fk_click_event_short_url` (NO ACTION) and `ix_click_event_short_url_id_clicked_at`. No CHECK is added to `short_url` (D85).
+  - **Click UPDATE:** a native `@Modifying(flushAutomatically, clearAutomatically)` statement, `UPDATE short_url SET click_count = click_count + 1, last_accessed_at = :clickedAt WHERE id = :id AND status = 'ACTIVE'`. It never touches `version` or `updated_at`.
+  - **Recorder:** a `ClickEvent` entity for the INSERT. `ClickRecorder.record(id, at)` is implemented by `JpaClickRecorder`, which truncates the time to microseconds and runs the UPDATE and then, only if one row changed, the INSERT, in a single `REQUIRES_NEW` transaction.
+  - **Fail-open:** handled in `RedirectService`, which logs WARN with the code, id, exception class and SQLSTATE only.
+  - **Seam:** the controller takes an `HttpMethod` parameter. GET calls `resolveAndRecordClick`; HEAD calls `resolve`.
+  - **Repository guard:** `RepositoryAnnotationsTest`.
+  - **Test clock:** a `@Primary` delegating `TestClock`, imported by `IntegrationTestBase`, following real time unless a test fixes it, and reset automatically.
+  - **Failure injection (AC3):** a PL/pgSQL trigger created and dropped inside the test. Its error message deliberately contains the URL, so the log check is real.
+  - **Critical implementation detail:** `ShortUrlTestData.truncate()` must become `TRUNCATE TABLE click_event, short_url` together with V2. Otherwise the new FK makes every IT fail at setup.
+- **Engineer decisions requested:**
+  - **Q1:** a click on a link that was deactivated or deleted after it resolved is not counted (`WHERE status = 'ACTIVE'`).
+  - **Q2:** Done-story tests change (US-008 reflection, web-slice and IT/feature, `NoTransactionalAnnotationIT`), listed test by test in design note §9.3.
+  - **Q3:** QA owns the test clock and hooks.
+  - **Q4:** defer the Micrometer lost-click counter to US-014.
+  - **Q5:** keep `DEFAULT now()` on `clicked_at`, for raw SQL only.
+  - **Q6:** add Cucumber scenarios for AC3 and AC4.
+  - **Q7:** a DB trigger in the IT satisfies AC3's "test double" wording.
+  - The architect also suggested recording D-1, D-5 and D-7 as numbered decisions.
+- **Engineer decision:** "approve all" (relayed). **Accepted:**
+  - Q1–Q7 and the rest of the design note (D-2 to D-9, the test plan, the carry-over).
+  - Recorded as numbered decisions:
+    - **D91** (Q1 / D-7: a click is counted only while the link is still ACTIVE);
+    - **D92** (Q5 / D-1: `DEFAULT now()` only for raw SQL);
+    - **D93** (D-5: fail-open lives in `RedirectService`).
+  - **Q3:** QA owns the test clock, and the mid-engineer makes the truncate change.
+  - **Q4:** the lost-click metric is deferred to US-014.
+  - **Q6:** Cucumber scenarios are added for AC3 and AC4.
+  - **Q7:** the DB trigger satisfies AC3.
+- **Main-session note, recorded in US-014's carry-over:** the fail-open latency risk when the connection pool is exhausted (up to Hikari's 30 s timeout), plus a pool and timeout review. The Q4 metric is recorded there too.
+- **Engineer guardrails:**
+  - V2 and the truncate change land together.
+  - Fail-open never passes the exception to the logger and never logs `getMessage()`.
+  - No `@Transactional` on any repository, and no other `@Modifying` method.
+  - The recorder truncates to microseconds, proven with a `…123456789Z` instant in an IT.
+  - The redirect response stays byte-identical.
+  - HEAD is never counted.
+  - The AC3 trigger is dropped in both setup and teardown, and its message contains the URL, with a positive control.
+  - "Never logged" checks cover both the raw and encoded forms.
+  - Every change to a Done-story test is listed test by test.
+  - Commit C6 is not pre-approved.
+- **C5b push:** the main session verified `e14f590` (parent `2ef7a20`, 39 files, no forbidden files, trailer present) and **pushed it; `origin/main` is now `e14f590`**.
+- **Rationale:** *(engineer to add)*
+- **Validation:** the architect cited the Spring Data JPA 3.5 docs and source, Spring 6.2 and PostgreSQL 18. The Hibernate claim about HQL updates came from the 6.2 guide and only supports an alternative that was rejected. The orchestrator confirmed that only the US-010 Design note and `architecture.md` changed.
+- **Mid-engineer:**
+  - Built V2, `ClickEvent`/`ClickEventRepository`, `recordClick` (native `@Modifying`), `ClickRecorder`/`JpaClickRecorder`, `RedirectService.resolveAndRecordClick` with fail-open, `PostgresServerErrors.sqlState`, and `RepositoryAnnotationsTest`.
+  - Made the truncate change in the same change as V2.
+  - Completed the N1/N2 carry-over.
+  - Listed the Done-story (US-008) test changes one by one.
+  - The orchestrator checked on disk that the fail-open WARN passes only strings, never the exception.
+- **QA-tester:**
+  - Built `TestClock` (`@Primary`, delegating, reset per test and per scenario, one context), `ClickRecordingIT`, `ClickRecordingFailureIT` (real trigger), `ClickRecordingConcurrencyIT`, a 9-scenario feature, and the re-pins in `RedirectIT` and `redirect.feature` (both Done-story, listed). No defects.
+- **Senior review, round 1: APPROVE.**
+  - Stale docs (R1), design labels used in comments (R2), duplicated trigger DDL (R3), inline fully qualified names (R5), plus NITs.
+  - **R4** (SQLSTATE fallback for client-side errors) and **R9** (`last_accessed_at` can move backwards) go to the engineer.
+  - Fixes: the mid-engineer did R5–R8, R12 and R13. R7 was checked experimentally: the test passes without the flag, so it was renamed to what it actually proves. The qa-tester did R2, R3, R5, R10, R11 and R14. The orchestrator did R1.
+- **Senior review, round 2: APPROVE.**
+  - N1–N5 NITs. The orchestrator fixed N3 (its own doc slip).
+  - The reviewer recommends **yes** on R4, and **yes at low priority** on R9 (it needs a new decision and an AC1 wording change).
+- **Engineer decision:** "approve all" (relayed). **Accepted:**
+  - US-010 is Done.
+  - **R4:** the SQLSTATE fallback is carried into US-011.
+  - **R9 → D94:** `GREATEST` for `last_accessed_at`, carried into US-011. US-010's AC1 is reworded and its SQL and tests are changed there, listed one by one in US-010's post-completion section.
+  - N1, N2, N4 and N5 are carried into US-011.
+  - Review rules 1, 2, 3 and 5 go into `CLAUDE.md` (the main session added them, for C6a). Rule 4 is **Rejected**.
+  - **Commit plan:** US-010 is committed alone as **C6a**, and US-011 becomes **C6b**. C6a is not pre-approved.
+- **Orchestrator note:** US-010's AC1 keeps its current wording in C6a, so the story matches the committed code. The rewording lands with the D94 SQL change in US-011.
+- **Independent verification by the main session:**
+  - It re-ran the G3 build: exit 0, Surefire 881/0, Failsafe 641/0 (run/failed), 0 "Failing row contains".
+  - It read V2: it matches the design, with no CHECK (D85).
+  - It confirmed the fail-open WARN passes only the code, id, exception simple name and sqlState, never the exception object.
+
+## Entry 30 — Commit C6a (G4)
+
+- **Date:** 2026-09-30
+- **Task:** Commit C6a: US-010, its docs (D91–D94, the US-007/US-008 post-completion notes, the US-011 and US-014 carry-overs), and the four `CLAUDE.md` review rules from US-010.
 - **Engineer decision:** *(pending G4; not pre-approved)*
 - **Rationale:** *(engineer to add)*
+- **Rationale:** *(engineer to add)*
+- **Validation:** the orchestrator ran `./mvnw -q clean verify`: exit 0, Surefire 881/0, Failsafe 641/0 (run/failed), including 176 Cucumber scenarios, merged LINE coverage 529/531. The log contains no trigger text, no URL token and no "Failing row contains".

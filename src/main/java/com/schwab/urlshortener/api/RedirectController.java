@@ -14,6 +14,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -33,9 +34,10 @@ import org.springframework.web.bind.annotation.RestController;
  * <p>Public API text deliberately omits decision IDs: D75 (encoding), D76 (no-store), D79 (query ignored) and
  * D55 (bad credentials give 401) are recorded here instead.
  *
- * <p>Seam for click recording (US-010): this is the single handler and the single response builder. The read
- * transaction in {@link RedirectService#resolve} has closed before it returns, so a later recorder runs in its own
- * transaction and cannot break the redirect (D12). No recorder exists yet.
+ * <p>Click recording: only GET counts (D9), so GET calls {@link RedirectService#resolveAndRecordClick} and every
+ * other method that reaches this handler (HEAD) calls {@link RedirectService#resolve}, which never records. The
+ * service records after its read transaction has closed and fails open (D12, D93). The response builder is the same
+ * for both methods.
  */
 @RestController
 @RequiredArgsConstructor
@@ -69,9 +71,10 @@ class RedirectController {
                     + "responses are indistinguishable.",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponseSchema.class)))
-    ResponseEntity<Void> redirect(@PathVariable("code") String code) {
+    ResponseEntity<Void> redirect(@PathVariable("code") String code, HttpMethod method) {
+        String target = HttpMethod.GET.equals(method) ? service.resolveAndRecordClick(code) : service.resolve(code);
         return ResponseEntity.status(HttpStatus.FOUND)
-                .header(HttpHeaders.LOCATION, LocationEncoder.encode(service.resolve(code)))
+                .header(HttpHeaders.LOCATION, LocationEncoder.encode(target))
                 .cacheControl(CacheControl.noStore())                    // D76: exactly "no-store"
                 .build();
     }

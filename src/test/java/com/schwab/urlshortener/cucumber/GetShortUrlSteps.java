@@ -190,6 +190,11 @@ public class GetShortUrlSteps {
         assertThat(Instant.parse(body().path("lastAccessedAt").asText())).isEqualTo(Instant.parse(lastAccess));
     }
 
+    @Then("the details response shows {int} clicks")
+    public void showsClickCount(int clicks) throws Exception {
+        assertThat(body().path("clickCount").asLong(-1)).isEqualTo(clicks);
+    }
+
     @Then("the details response does not expose the owner, the id, the update time or the version")
     public void doesNotExposeInternals() throws Exception {
         for (String field : new String[] {"createdBy", "id", "updatedAt", "version"}) {

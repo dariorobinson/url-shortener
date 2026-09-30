@@ -24,7 +24,7 @@ See [requirements.md](requirements.md). The ambiguous requirements were resolved
 | 6 | Create/read API and error handling | Done (US-006 create, US-007 read) |
 | 7 | Redirect | Done (US-008) |
 | 8 | Deactivate/reactivate and soft delete | Done (US-009) |
-| 9 | Analytics | Planned |
+| 9 | Analytics | Click recording done (US-010); stats are US-011 |
 
 ### Architecture decisions
 See [architecture.md](architecture.md).
@@ -124,6 +124,18 @@ See [architecture.md](architecture.md).
   - **QA:** `LifecycleIT` and `LifecycleConcurrencyIT`: a race test accepting either 409 code, plus deterministic held-row-lock and serialised tests, and a click-race test. There are also D70/D88/D89 no-change tests and 37 Cucumber scenarios.
   - **Review:** APPROVE in both rounds. The fixes included the web-slice Jackson trap and some fixtures that could never fail.
   - **Validation:** the orchestrator ran `./mvnw -q clean verify` (1453 tests, 0 failures, LINE coverage 99.6%).
+- **US-010 (Task 9, click recording):**
+  - **Design:** approved at G2 (D91–D93).
+  - **Schema:** V2 adds `click_event`, with three columns (D8).
+  - **Recording:** GET only, never HEAD. `JpaClickRecorder` runs an atomic `click_count + 1` UPDATE that is guarded by `status = 'ACTIVE'` and never touches `version` or `updated_at`, then an INSERT, both in one `REQUIRES_NEW` transaction. The time is truncated to microseconds.
+  - **Fail-open:** handled in `RedirectService`, which logs WARN with the code, id, class and SQLSTATE only.
+  - **Redirect:** the response is byte-identical to before.
+  - **QA:**
+    - A controllable `TestClock` in the single shared context.
+    - `ClickRecordingIT`, `ClickRecordingFailureIT` (a real PL/pgSQL trigger whose message contains the URL; no partial click) and `ClickRecordingConcurrencyIT` (50 concurrent clicks give exactly 50; the D91 state race; PATCH racing a real click).
+    - 9 Cucumber scenarios.
+  - **Review:** APPROVE in both rounds. R4 (SQLSTATE fallback) and R9 (monotonic `last_accessed_at`) went to the engineer.
+  - **Validation:** the orchestrator ran `./mvnw -q clean verify` (1522 tests, 0 failures, LINE coverage 99.62%).
 
 ---
 

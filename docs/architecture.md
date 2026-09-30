@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-09-30 (US-006 implemented; content negotiation per D70; US-007 implemented; US-008 implemented; US-009 implemented). Each section is marked *planned*, *designed (US-nnn)*, or *implemented (US-nnn)* as work progresses.
+Last updated: 2026-09-30 (US-006 implemented; content negotiation per D70; US-007 implemented; US-008 implemented; US-009 implemented; US-010 implemented). Each section is marked *planned*, *designed (US-nnn)*, or *implemented (US-nnn)* as work progresses.
 
 ## Overview
 
@@ -130,6 +130,11 @@ support/IntegrationTestBase     support/@RepositoryTest
   - Tests call `reset()` before and after each test, and a Cucumber hook resets every scenario.
   - It is thread-safe (`ConcurrentLinkedQueue`, `AtomicInteger`) and assumes serial test execution.
   - Production code has no test mode.
+- **Controllable test clock** *(implemented (US-010); US-010 Design note §7)*:
+  - `support/TestClock` extends `Clock`. It is a `@Primary` bean in `support/TestClockConfiguration`, which `IntegrationTestBase` imports, so there is still one context. It delegates to the production `clock` bean unless a test calls `setInstant`/`advance`.
+  - `reset()` restores real time. A JUnit extension on `IntegrationTestBase` resets it before and after every IT test, and a Cucumber hook resets it every scenario. It is thread-safe (`AtomicReference`).
+  - `ClockConfig` is unchanged, and so is production code.
+- **Truncation with V2** *(implemented (US-010))*: `ShortUrlTestData.truncate()` is `TRUNCATE TABLE click_event, short_url`. PostgreSQL refuses to truncate a table referenced by a foreign key unless every referencing table is in the same command. There is no `CASCADE`.
 - **Forged `Host` headers** *(implemented (US-006))*: the Failsafe `argLine` gets `-Djdk.httpclient.allowRestrictedHeaders=host`. It is test-only and never set in runtime JVM options.
 - **Repository tests** *(implemented (US-002))*:
   - Constraint tests insert through `JdbcTemplate`, which joins the `@DataJpaTest` transaction, so they hit the DB constraint rather than the entity. They assert SQLSTATE plus constraint name from pgjdbc's `ServerErrorMessage`, with one failing statement per test because PostgreSQL aborts the transaction after an error.
@@ -155,17 +160,18 @@ com.schwab.urlshortener
 │   └── exception/     # InvalidUrl/InvalidAlias/AliasAlreadyExists/ShortCodeUnavailable exceptions (US-006);
 │                      #   ShortUrlNotFoundException (implemented (US-007));
 │                      #   ShortUrlConcurrentModificationException (implemented (US-009))
-├── domain/            # ShortUrl entity, ShortUrlStatus
+├── domain/            # ShortUrl entity, ShortUrlStatus; ClickEvent (immutable, click_event) (implemented (US-010))
 │   └── exception/     # ShortUrlAlreadyDeactivated/AlreadyActive/Deleted exceptions
 ├── shortcode/         # ShortCodeGenerator + implementation; ShortCodeFormat (D6 format check, shared by
 │                      #   AliasPolicy, US-007 and US-008) (implemented (US-007))
 ├── validation/        # UrlValidator, AliasPolicy
-├── analytics/         # ClickRecorder + implementation
+├── analytics/         # ClickRecorder (interface) + JpaClickRecorder (REQUIRES_NEW template) (implemented (US-010))
 └── repository/        # ShortUrlRepository (Spring Data JPA); PostgresServerErrors (US-006; the only
-                       #   class that imports org.postgresql.*)
+                       #   class that imports org.postgresql.*); ClickEventRepository and
+                       #   ShortUrlRepository.recordClick (implemented (US-010))
 ```
 
-## Database schema (V1 *implemented (US-002)*, amended by D47; V2 planned)
+## Database schema (V1 *implemented (US-002)*, amended by D47; V2 *implemented (US-010)*)
 
 **V1 — short_url** (`V1__create_short_url.sql`). The SQL below is the approved schema.
 - `ck_short_url_deleted_consistency` was tightened at the US-002 design gate (D44). The original `(status = 'DELETED') = (both set)` form accepted a non-deleted row with only one audit field set.
@@ -203,16 +209,25 @@ CREATE TABLE short_url (
 
 Column ownership (see the domain model below): the application writes every column except `id` (sequence), `version` (Hibernate), and `click_count`/`last_accessed_at` (only US-010's atomic UPDATE, D27). The `DEFAULT now()`/`'ACTIVE'`/`FALSE`/`0` values apply only to raw SQL inserts, except `click_count`, whose `DEFAULT 0` is how every new row gets its initial count. The unique constraint's index serves the redirect lookup. Its keys stay at most 32 bytes because PostgreSQL evaluates `ck_short_url_code_format` before inserting index entries. Application validation (US-004) must reject over-length or space-padded input as submitted, without trimming (D47).
 
-**V2 — click_event** (analytics)
+**V2 — click_event** (`V2__create_click_event.sql`, analytics) *(implemented (US-010); the exact file, with comments, is in the US-010 Design note §1)*
 
 ```sql
 CREATE TABLE click_event (
-  id           BIGSERIAL PRIMARY KEY,
-  short_url_id BIGINT NOT NULL REFERENCES short_url(id),
-  clicked_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+  id           BIGSERIAL     PRIMARY KEY,
+  short_url_id BIGINT        NOT NULL,
+  clicked_at   TIMESTAMPTZ   NOT NULL DEFAULT now(),
+  CONSTRAINT fk_click_event_short_url FOREIGN KEY (short_url_id) REFERENCES short_url (id)
 );
-CREATE INDEX ix_click_event_url_time ON click_event (short_url_id, clicked_at);
+
+CREATE INDEX ix_click_event_short_url_id_clicked_at ON click_event (short_url_id, clicked_at);
 ```
+
+- Names follow V1: the unnamed PK is `click_event_pkey`, the FK is named, and the index is named after its columns (it replaces the earlier sketch's `ix_click_event_url_time`).
+- The index serves US-011's per-link, time-ranged query and the FK's referencing-side lookups.
+- Only three columns exist (D8).
+- `clicked_at` always comes from the application `Clock`, truncated to microseconds. As in V1, `DEFAULT now()` serves raw SQL only (D45). Hibernate always sends the column, so an application insert never falls back to it.
+- The FK uses the default NO ACTION. Links are soft-deleted (D1), so a hard delete of a clicked link is refused.
+- V2 adds no CHECK to `short_url` (D85).
 
 **V3 — expiration** is designed after the brownfield impact analysis (Scenario 2).
 
@@ -241,6 +256,14 @@ The full detail is in the US-002 Design note.
 HTTP mappings: *implemented (US-009)* (see *Lifecycle* under REST API). `ShortUrlDeletedException` is unreachable through `loadVisible`, which hides `DELETED` rows first, but the advice still maps it to the identical 404 (D46).
 
 **`ShortUrlRepository`** (`repository`): `JpaRepository<ShortUrl, Long>` plus `findByShortCode` (case-sensitive, no status filtering). Integrity under concurrency comes from `uk_short_url_short_code`, `@Version`, and the D27 mapping, not from application pre-checks.
+
+*Implemented (US-010):*
+- `ShortUrlRepository` gains `int recordClick(long id, Instant clickedAt)`, a native `@Modifying(flushAutomatically = true, clearAutomatically = true)` `@Query`:
+  `UPDATE short_url SET click_count = click_count + 1, last_accessed_at = :clickedAt WHERE id = :id AND status = 'ACTIVE'`.
+  - It never touches `version` or `updated_at` (D16, D27).
+  - It has no `@Transactional`, and Spring Data gives declared query methods none, so it runs only inside the caller's transaction.
+  - A reflection unit test (`RepositoryAnnotationsTest`) pins the SQL, both flags, the absence of `@Transactional`, and that no other repository method is `@Modifying`. This covers the repository-interface gap in `NoTransactionalAnnotationIT`.
+- `ClickEventRepository` is `JpaRepository<ClickEvent, Long>`. `ClickEvent` is `@Immutable`, with a plain `long shortUrlId` (no association) and `ClickEvent.of(id, at)`, which truncates to microseconds.
 
 ## REST API (planned)
 
@@ -311,6 +334,12 @@ The full detail is in the US-008 Design note.
 - **404 negotiation:** the problem+json fallback applies to every parseable `Accept` (`text/html`, `image/*`, `*/*`, none). An unparseable `Accept` gets a 404 with an empty body. It is never a 406.
 - **Routing precedence:** literal mappings (`/error`, `/swagger-ui.html`) win as direct-path matches. Actuator's handler mapping (order −100) runs before `RequestMappingHandlerMapping`. `/{code}` takes every other single segment, including `/favicon.ico`, and bare `/api` for authenticated callers, which gets 404 because it is a reserved word. A QA inventory test pins the single-segment GET mappings to exactly `/{code}`, `/error` and `/swagger-ui.html`.
 - **US-010 seam:** one handler and one response builder. The read transaction has closed before `resolve` returns. US-010 adds an `HttpMethod` parameter, records clicks for GET only after a successful resolution, and fails open (D9, D12). US-008 adds no `ClickRecorder`.
+- **Click recording** *(implemented (US-010); US-010 Design note §4–§6)*:
+  - The handler takes `(@PathVariable String code, HttpMethod method)`. GET calls `RedirectService.resolveAndRecordClick(code)`; HEAD and anything else call `resolve(code)`, which never records (D9, D18). The response builder is unchanged.
+  - `resolveAndRecordClick` resolves through the same private lookup, which returns a private `(id, target)` record, so the entity never leaves the service. It then calls `ClickRecorder.record(id, clock.instant())` **after** the read-only transaction has committed.
+  - Any `RuntimeException` is caught in `RedirectService` and logged at WARN with the code, id, exception class and SQLSTATE only: never the URL, the exception message or a stack trace (D12, D64, D93). The target is still returned.
+  - `JpaClickRecorder` truncates the instant to microseconds once. In a constructor-built `REQUIRES_NEW` template it runs `recordClick`, then, only if one row changed, `saveAndFlush(ClickEvent.of(id, at))`. Either failure rolls back both.
+  - A link deactivated or deleted between resolution and the click UPDATE matches 0 rows and is not counted, while the 302 stands (D91).
 - **Logging:** DEBUG only, with the well-formed code and a reason (`NOT_FOUND`, `DEACTIVATED`, `DELETED`, `MALFORMED` without the value). Never the target URL or host.
 
 ### Lifecycle: deactivate, reactivate, soft delete — *implemented (US-009)*
@@ -384,7 +413,13 @@ Rule: no handler other than the redirect may be mapped to a single path segment,
 - **Reason:** exact counts, cheap total reads, no rollup table to keep consistent.
 - **Alternative:** a `daily_click_stats` upsert table, or asynchronous events via Kafka/SQS.
 - **Trade-off:** synchronous writes add latency to redirects and contend on the counter row for hot links. A production system would publish click events to a message broker and aggregate them asynchronously. Failures fail open (D12).
-- **Seam** *(implemented (US-008))*: recording hooks into the one redirect handler, after a successful `RedirectService.resolve` and for GET only. `HttpMethod` is resolved as a handler argument, because Spring maps HEAD onto the GET mapping. The read-only resolution transaction has already closed, so a recorder failure cannot roll it back. The response builder and its headers stay as they are. US-010 designs the `ClickRecorder` signature, its transaction and the fail-open wrapper.
+- **Seam** *(implemented (US-008))*: recording hooks into the one redirect handler, after a successful `RedirectService.resolve` and for GET only. `HttpMethod` is resolved as a handler argument, because Spring maps HEAD onto the GET mapping. The read-only resolution transaction has already closed, so a recorder failure cannot roll it back. The response builder and its headers stay as they are. US-010 defined the `ClickRecorder` signature, its transaction and the fail-open wrapper.
+- **Recorder design** *(implemented (US-010))*:
+  - `ClickRecorder.record(long shortUrlId, Instant clickedAt)` has one bean, `JpaClickRecorder`.
+  - Fail-open lives in `RedirectService`, not in a decorator (D93). It then covers any implementation, including a future broker-backed one, and a `@Primary` replacement can never bypass it.
+  - The atomicity unit is one `REQUIRES_NEW` transaction: a status-guarded counter UPDATE, then the event INSERT.
+  - Concurrency: the atomic `+ 1` under READ COMMITTED loses no updates, and clicks on one link serialise on its row lock. A PATCH queued behind a click still matches `WHERE version = ?`, because clicks never bump `version`.
+  - There is no lost-click metric until US-014: actuator exposes only `health`.
 
 ### Time zones for daily stats
 - **Recommendation:** accept only IANA region IDs and `UTC`, validated in Java, then group in PostgreSQL with `AT TIME ZONE`.

@@ -212,4 +212,15 @@ public class RedirectSteps {
         assertThat(notedRow).isNotNull().isNotEmpty();
         assertThat(data.rowState(code)).isEqualTo(notedRow);
     }
+
+    @Then("the stored row of {string} has {int} click and an unchanged version and update time")
+    public void theStoredRowHasClicks(String code, int clicks) {
+        assertThat(statusesSinceNoted).isNotEmpty().allMatch(status -> status == 302);
+        Map<String, Object> row = data.rowState(code);
+        assertThat(((Number) row.get("click_count")).longValue()).isEqualTo(clicks);
+        assertThat(row.get("last_accessed_at")).isNotNull();
+        assertThat(row.get("version")).isEqualTo(notedRow.get("version"));
+        assertThat(row.get("updated_at")).isEqualTo(notedRow.get("updated_at"));
+        assertThat(row.get("status")).isEqualTo(notedRow.get("status"));
+    }
 }
