@@ -23,7 +23,7 @@ See [requirements.md](requirements.md). The ambiguous requirements were resolved
 | 5 | Security foundation (`USER` / `ADMIN`, 401/403) | Done (US-005) |
 | 6 | Create/read API and error handling | Done (US-006 create, US-007 read) |
 | 7 | Redirect | Done (US-008) |
-| 8 | Deactivate/reactivate and soft delete | Planned |
+| 8 | Deactivate/reactivate and soft delete | Done (US-009) |
 | 9 | Analytics | Planned |
 
 ### Architecture decisions
@@ -115,6 +115,15 @@ See [architecture.md](architecture.md).
   - **Empirical check:** QA pinned Tomcat's real behaviour (C1 condition). It confirmed the architect's source reading and exposed R1: a long non-ASCII target made the redirect return a bare 500. The engineer approved D84, which limits the encoded form to 2048 bytes at create.
   - **Review:** round 1 was CHANGES_REQUIRED (R1, plus three test-guardrail gaps), followed by two fix rounds. The final review was APPROVE.
   - **Validation:** the orchestrator ran `./mvnw -q clean verify` (1156 tests, 0 failures, LINE coverage 99.56%).
+- **US-009 (Task 8, lifecycle):**
+  - **Design:** approved at G2 (D86–D90). The engineer chose the orchestrator's strict-boolean option over the architect's Jackson default.
+  - **PATCH** `{"active": boolean}`: the D26 409s, and the D58 body.
+  - **DELETE:** ADMIN only, with 403 before any lookup. It returns 204, sets `deleted_by` to the admin's username, and the code can never be reused.
+  - **Transactions:** a `readWrite` template with one explicit flush. `OptimisticLockingFailureException` is caught outside it and becomes 409 `CONCURRENT_MODIFICATION`; nothing is logged at ERROR.
+  - **Click data:** never overwritten.
+  - **QA:** `LifecycleIT` and `LifecycleConcurrencyIT`: a race test accepting either 409 code, plus deterministic held-row-lock and serialised tests, and a click-race test. There are also D70/D88/D89 no-change tests and 37 Cucumber scenarios.
+  - **Review:** APPROVE in both rounds. The fixes included the web-slice Jackson trap and some fixtures that could never fail.
+  - **Validation:** the orchestrator ran `./mvnw -q clean verify` (1453 tests, 0 failures, LINE coverage 99.6%).
 
 ---
 

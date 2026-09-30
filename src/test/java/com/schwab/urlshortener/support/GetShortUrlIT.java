@@ -434,8 +434,9 @@ class GetShortUrlIT extends IntegrationTestBase {
         assertThat(json(response).path("errorCode").asText()).isEqualTo("ACCESS_DENIED");
     }
 
+    // PATCH is mapped on this path since US-009, so it is no longer a 405 case; LifecycleIT covers it.
     @ParameterizedTest
-    @ValueSource(strings = {"PUT", "POST", "PATCH"})
+    @ValueSource(strings = {"PUT", "POST"})
     void shouldReturn405WithAllowGetForOtherMethodsOnACodeAndChangeNothing(String method) throws Exception {
         Map<String, Object> before = data.rowState("AliceAct1");
         int rows = rowCount();

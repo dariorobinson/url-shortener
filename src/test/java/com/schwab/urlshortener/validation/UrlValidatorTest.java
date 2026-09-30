@@ -161,7 +161,7 @@ class UrlValidatorTest {
     }
 
     @Test
-    void shouldCountCodePointsNotUtf16UnitsOrBytesForShortMultibyteUrls() {
+    void shouldAcceptAShortUrlOfSupplementaryCharacters() {
         // 100 emoji: 200 UTF-16 units, 400 UTF-8 bytes, 1200 encoded bytes, 122 code points. Well inside both limits.
         String emoji = new String(Character.toChars(0x1F600));
         String url = PREFIX + emoji.repeat(100);

@@ -3,7 +3,9 @@ package com.schwab.urlshortener.api;
 import static com.schwab.urlshortener.support.TestUsers.ALICE;
 import static com.schwab.urlshortener.support.TestUsers.ALICE_PASSWORD;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -16,9 +18,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.exc.MismatchedInputException;
 import com.schwab.urlshortener.security.SecuritySliceTestConfiguration;
 import com.schwab.urlshortener.service.RedirectService;
 import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
+import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
@@ -63,6 +67,19 @@ class RedirectControllerWebMvcTest {
 
     @MockitoBean
     private RedirectService service;
+
+    /** D89 reaches every slice through {@code SecuritySliceTestConfiguration}, not through a per-class import. */
+    @Test
+    void shouldApplyTheD89StrictBooleanSettingToTheSliceObjectMapper() throws Exception {
+        record Flag(Boolean active) {
+        }
+
+        assertThat(objectMapper.readValue("{\"active\":true}", Flag.class).active()).isTrue();
+        for (String value : List.of("\"false\"", "0", "1", "1.0", "[]")) {
+            assertThatThrownBy(() -> objectMapper.readValue("{\"active\":" + value + "}", Flag.class))
+                    .isInstanceOf(MismatchedInputException.class);
+        }
+    }
 
     private void assertExact302(MvcResult result, String expectedLocation) {
         var response = result.getResponse();
@@ -178,6 +195,7 @@ class RedirectControllerWebMvcTest {
 
         assertThat(result.getResponse().getStatus()).isEqualTo(404);
         assertThat(result.getResponse().getContentAsByteArray()).isEmpty();
+        verify(service).resolve(CODE);
     }
 
     @Test
@@ -189,6 +207,7 @@ class RedirectControllerWebMvcTest {
         MvcResult result = mockMvc.perform(head(PATH)).andReturn();
 
         assertThat(result.getResponse().getStatus()).isEqualTo(404);
+        verify(service, times(2)).resolve(CODE);
     }
 
     @Test

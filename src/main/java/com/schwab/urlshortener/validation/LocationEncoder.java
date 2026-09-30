@@ -19,6 +19,8 @@ public final class LocationEncoder {
      * D75: every code point outside printable ASCII (0x21 to 0x7E) becomes the upper-case {@code %XX} form of its
      * UTF-8 bytes. Everything else, existing escapes included, is copied unchanged: no parsing, no normalisation.
      * The result is pure ASCII, so its {@code length()} is its byte length.
+     *
+     * @throws NullPointerException if target is null
      */
     public static String encode(String target) {
         StringBuilder out = new StringBuilder(target.length());

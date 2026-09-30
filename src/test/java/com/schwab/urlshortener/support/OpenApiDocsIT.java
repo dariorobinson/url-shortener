@@ -41,6 +41,8 @@ class OpenApiDocsIT extends IntegrationTestBase {
     private JsonNode docs;
     private JsonNode post;
     private JsonNode getOne;
+    private JsonNode patchOne;
+    private JsonNode deleteOne;
     private JsonNode redirect;
 
     @BeforeEach
@@ -49,6 +51,8 @@ class OpenApiDocsIT extends IntegrationTestBase {
         docs = objectMapper.readTree(response.getBody());
         post = docs.path("paths").path(CREATE_PATH).path("post");
         getOne = docs.path("paths").path(GET_PATH).path("get");
+        patchOne = docs.path("paths").path(GET_PATH).path("patch");
+        deleteOne = docs.path("paths").path(GET_PATH).path("delete");
         redirect = docs.path("paths").path(REDIRECT_PATH).path("get");
     }
 
@@ -249,5 +253,104 @@ class OpenApiDocsIT extends IntegrationTestBase {
     void shouldRequireNoSecurityOnTheRedirectOperation() {
         assertThat(redirect.has("security")).isFalse();
         assertThat(docs.has("security")).isFalse();
+    }
+
+    // ---- US-009: PATCH and DELETE /api/v1/urls/{code} ----
+
+    @Test
+    void shouldDocumentExactlyTheGetPatchAndDeleteOperationsOnTheCodePath() {
+        assertThat(names(docs.path("paths").path(GET_PATH))).containsExactlyInAnyOrder("get", "patch", "delete");
+    }
+
+    @Test
+    void shouldDocumentPatchWithOneCodePathParameterAndAJsonOnlyRequestBodyWithActiveRequired() {
+        assertThat(patchOne.isMissingNode()).as("PATCH %s documented", GET_PATH).isFalse();
+        JsonNode parameters = patchOne.path("parameters");
+        assertThat(parameters.size()).isEqualTo(1);
+        assertThat(parameters.get(0).path("name").asText()).isEqualTo("code");
+        assertThat(parameters.get(0).path("in").asText()).isEqualTo("path");
+        assertThat(patchOne.path("requestBody").path("required").asBoolean()).isTrue();
+        JsonNode content = patchOne.path("requestBody").path("content");
+        assertThat(names(content)).containsExactly("application/json");
+        JsonNode schema = resolve(content.path("application/json").path("schema"));
+        assertThat(names(schema.path("properties"))).containsExactly("active");
+        assertThat(schema.path("properties").path("active").path("type").asText()).isEqualTo("boolean");
+        List<String> required = new ArrayList<>();
+        schema.path("required").forEach(n -> required.add(n.asText()));
+        assertThat(required).containsExactly("active");
+    }
+
+    @Test
+    void shouldDocumentPatchResponsesAsExactlyTheSevenExpectedStatuses() {
+        assertThat(names(patchOne.path("responses")))
+                .containsExactlyInAnyOrder("200", "400", "401", "404", "406", "409", "415");
+    }
+
+    @Test
+    void shouldDocumentPatch200AsJsonOnlyWithTheSameEightPropertiesAsCreate() {
+        JsonNode ok = patchOne.path("responses").path("200");
+        assertThat(names(ok.path("content"))).containsExactly("application/json");
+        JsonNode schema = resolve(ok.path("content").path("application/json").path("schema"));
+        JsonNode createdSchema = resolve(post.path("responses").path("201").path("content")
+                .path("application/json").path("schema"));
+        assertThat(names(schema.path("properties"))).isEqualTo(names(createdSchema.path("properties")));
+    }
+
+    @Test
+    void shouldDocumentEveryPatchErrorResponseAsProblemJsonOnlyWithTheProblemSchema() {
+        for (String status : List.of("400", "401", "404", "406", "409", "415")) {
+            JsonNode response = patchOne.path("responses").path(status);
+            assertThat(names(response.path("content"))).as("media types of PATCH %s", status)
+                    .containsExactly("application/problem+json");
+            assertThat(response.path("content").path("application/problem+json").path("schema").path("$ref").asText())
+                    .as("schema of PATCH %s", status).endsWith("/Problem");
+        }
+    }
+
+    @Test
+    void shouldApplyBasicAuthenticationToPatchAndDelete() {
+        assertThat(patchOne.path("security").toString()).contains("basicAuth");
+        assertThat(deleteOne.path("security").toString()).contains("basicAuth");
+    }
+
+    @Test
+    void shouldDocumentDeleteWithOneCodePathParameterAndNoRequestBody() {
+        assertThat(deleteOne.isMissingNode()).as("DELETE %s documented", GET_PATH).isFalse();
+        JsonNode parameters = deleteOne.path("parameters");
+        assertThat(parameters.size()).isEqualTo(1);
+        assertThat(parameters.get(0).path("name").asText()).isEqualTo("code");
+        assertThat(parameters.get(0).path("in").asText()).isEqualTo("path");
+        assertThat(deleteOne.has("requestBody")).isFalse();
+    }
+
+    @Test
+    void shouldDocumentDeleteResponsesAsExactlyTheSixExpectedStatusesWithNoImplicit200() {
+        assertThat(names(deleteOne.path("responses")))
+                .containsExactlyInAnyOrder("204", "401", "403", "404", "406", "409");
+    }
+
+    @Test
+    void shouldDocumentDelete204WithNoContent() {
+        assertThat(deleteOne.path("responses").path("204").has("content")).isFalse();
+    }
+
+    @Test
+    void shouldDocumentEveryDeleteErrorResponseAsProblemJsonOnlyWithTheProblemSchema() {
+        for (String status : List.of("401", "403", "404", "406", "409")) {
+            JsonNode response = deleteOne.path("responses").path(status);
+            assertThat(names(response.path("content"))).as("media types of DELETE %s", status)
+                    .containsExactly("application/problem+json");
+            assertThat(response.path("content").path("application/problem+json").path("schema").path("$ref").asText())
+                    .as("schema of DELETE %s", status).endsWith("/Problem");
+        }
+    }
+
+    @Test
+    void shouldDescribeTheAdminOnlySoftDeleteAndTheCodeNeverBeingReused() {
+        String description = deleteOne.path("description").asText();
+
+        assertThat(description).contains("ACCESS_DENIED").contains("ALIAS_ALREADY_EXISTS");
+        assertThat(patchOne.path("description").asText()).contains("CONCURRENT_MODIFICATION")
+                .contains("SHORT_URL_NOT_FOUND");
     }
 }

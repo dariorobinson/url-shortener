@@ -186,4 +186,6 @@ Likewise `APP_BASEURL` (canonical) and `APP_BASE_URL` (legacy) both bind `app.ba
   - **Moved:** the encoder test rows went from `RedirectControllerTest` to the new `LocationEncoderTest`, with no case lost.
 - The story's status stays **Done**. The change is recorded here for traceability.
 
-- **Planned follow-up (engineer-approved at US-008 G3, carried into US-009 as N1):** `shouldCountCodePointsNotUtf16UnitsOrBytesForShortMultibyteUrls` will be renamed to what it proves, or deleted as a duplicate. The actual change will be listed here test by test when US-009 makes it.
+- **Follow-up made in US-009 (engineer-approved at US-008 G3, carried as N1), test by test:**
+  - **Renamed:** `UrlValidatorTest.shouldCountCodePointsNotUtf16UnitsOrBytesForShortMultibyteUrls` is now `shouldAcceptAShortUrlOfSupplementaryCharacters`. The body is unchanged (100 emoji after the prefix, expected valid). It passes under every counting method, because D84 makes the difference between code points, UTF-16 units and bytes unobservable, so the old name overclaimed. It is kept, not deleted: it is not a duplicate of `shouldAcceptValidSupplementaryCharacterInPath`, which uses a single emoji, and it covers a longer run of supplementary characters.
+  - **Production comment only:** `UrlValidator.isValid` now says that D84 implies the D11 count and that the D11 check stays as the cheap limit before encoding. No behaviour changed.

@@ -217,8 +217,10 @@ class SecurityIT extends IntegrationTestBase {
         HttpResponse<String> response = send("DELETE", "/api/v1/urls/abc1234", TestUsers.ADMIN,
                 TestUsers.ADMIN_PASSWORD);
 
-        // No delete handler exists yet (US-009): security passed, so 404 or 405, never 401/403.
-        assertThat(response.statusCode()).isIn(404, 405);
+        // Security passed and the delete handler ran: an unknown code is the handler's own 404, not the
+        // unmapped-path RESOURCE_NOT_FOUND (US-009).
+        assertThat(response.statusCode()).isEqualTo(404);
+        assertThat(json(response).get("errorCode").asText()).isEqualTo("SHORT_URL_NOT_FOUND");
     }
 
     @Test
@@ -341,12 +343,12 @@ class SecurityIT extends IntegrationTestBase {
     void shouldNotLetUserReachDeleteHandlerThroughPathVariants(String path, int expectedStatus) throws Exception {
         HttpResponse<String> response = send("DELETE", path, TestUsers.ALICE, TestUsers.ALICE_PASSWORD);
 
-        // Exact status as the build behaves today (no delete handler until US-009).
+        // Exact status with the US-009 delete handler mapped. As a USER every row is refused before any handler
+        // could run, so adding the handler changed none of them.
         // 403: the ADMIN rule (D3) or the final denyAll (D57) refused the USER; 400: the firewall rejected the path.
-        // When US-009 adds the handler, revisit each row deliberately.
         assertThat(response.statusCode()).as("DELETE %s", path).isEqualTo(expectedStatus);
         if (expectedStatus == 403) {
-            // R22: a 403 here is the security ACCESS_DENIED problem, not some other 403.
+            // A 403 here is the security ACCESS_DENIED problem, not some other 403.
             assertThat(contentType(response)).startsWith("application/problem+json");
             assertThat(json(response).get("errorCode").asText()).as("DELETE %s", path).isEqualTo("ACCESS_DENIED");
         }

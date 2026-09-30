@@ -58,7 +58,7 @@ import org.springframework.http.HttpStatus;
  * controller (AC1 to AC5, AC7, D3, D30, D32, D37, D52, D54, D55). No business endpoint exists yet.
  */
 @WebMvcTest(controllers = SecurityConfigWebMvcTest.SecurityProbeController.class)
-@Import({SecurityConfig.class, UserAccountsConfig.class, SecurityConfigWebMvcTest.SecurityProbeController.class})
+@Import({SecuritySliceTestConfiguration.class, SecurityConfigWebMvcTest.SecurityProbeController.class})
 @ActiveProfiles("test")
 @ExtendWith(OutputCaptureExtension.class)
 class SecurityConfigWebMvcTest {

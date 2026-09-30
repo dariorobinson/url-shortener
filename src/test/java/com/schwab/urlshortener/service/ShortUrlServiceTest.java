@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -18,15 +21,19 @@ import ch.qos.logback.core.read.ListAppender;
 import com.schwab.urlshortener.config.ShortCodeProperties;
 import com.schwab.urlshortener.domain.ShortUrl;
 import com.schwab.urlshortener.domain.ShortUrlStatus;
+import com.schwab.urlshortener.domain.exception.ShortUrlAlreadyActiveException;
+import com.schwab.urlshortener.domain.exception.ShortUrlAlreadyDeactivatedException;
 import com.schwab.urlshortener.repository.ShortUrlRepository;
 import com.schwab.urlshortener.service.exception.AliasAlreadyExistsException;
 import com.schwab.urlshortener.service.exception.InvalidAliasException;
 import com.schwab.urlshortener.service.exception.InvalidUrlException;
 import com.schwab.urlshortener.service.exception.ShortCodeUnavailableException;
+import com.schwab.urlshortener.service.exception.ShortUrlConcurrentModificationException;
 import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
 import com.schwab.urlshortener.shortcode.ShortCodeGenerator;
 import com.schwab.urlshortener.validation.AliasPolicy;
 import com.schwab.urlshortener.validation.UrlValidator;
+import jakarta.persistence.OptimisticLockException;
 import java.lang.reflect.Method;
 import java.time.Clock;
 import java.time.Instant;
@@ -38,28 +45,39 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.postgresql.util.PSQLException;
 import org.postgresql.util.ServerErrorMessage;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.orm.jpa.JpaOptimisticLockingFailureException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Get logic (US-007 AC1-AC5, D4, D13, D72) and create logic (AC2, AC3, AC4, AC5, AC6, AC7, AC11, AC15, D5, D29,
- * D45, D47, D48, D60, D63, D64) against mocks: no Spring context, no database.
+ * Lifecycle logic (US-009 AC1-AC11, D26, D35, D36, D46, D51, D87), get logic (US-007 AC1-AC5, D4, D13, D72) and
+ * create logic (AC2, AC3, AC4, AC5, AC6, AC7, AC11, AC15, D5, D29, D45, D47, D48, D60, D63, D64) against mocks: no
+ * Spring context, no database.
  */
 class ShortUrlServiceTest {
 
     private static final String URL = "https://example.com/page";
     private static final Instant NOW = Instant.parse("2026-09-29T14:03:12.123456789Z");
     private static final Instant NOW_MICROS = Instant.parse("2026-09-29T14:03:12.123456Z");
+    /** When the fixture's earlier transition happened; distinct from NOW_MICROS so "unchanged" can fail. */
+    private static final Instant EARLIER = NOW_MICROS.minusSeconds(60);
+    private static final String FIRST_ADMIN = "first-admin";
 
     private final ShortUrlRepository repository = mock(ShortUrlRepository.class);
     private final ShortCodeGenerator generator = mock(ShortCodeGenerator.class);
@@ -480,9 +498,9 @@ class ShortUrlServiceTest {
     private ShortUrl stored(String code, String owner, ShortUrlStatus status) {
         ShortUrl url = ShortUrl.create(code, URL, false, owner, NOW_MICROS);
         if (status == ShortUrlStatus.DEACTIVATED) {
-            url.deactivate(NOW_MICROS);
+            url.deactivate(EARLIER);
         } else if (status == ShortUrlStatus.DELETED) {
-            url.softDelete("admin", NOW_MICROS);
+            url.softDelete(FIRST_ADMIN, EARLIER);
         }
         when(repository.findByShortCode(code)).thenReturn(Optional.of(url));
         return url;
@@ -678,6 +696,462 @@ class ShortUrlServiceTest {
         service.get("Abc1234", ALICE);
 
         assertThat(logs.list).isEmpty();
+    }
+
+    // ---- US-009: setActive (AC1-AC4, AC7-AC11, D26, D35)
+
+    private static String joined(ListAppender<ILoggingEvent> appender) {
+        return String.join("\n", appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"alice,false", "admin,true"})
+    void shouldDeactivateAnActiveLinkForItsOwnerOrAnAdminAndFlushExactlyOnce(String username, boolean admin) {
+        ShortUrl url = stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+
+        ShortUrlView view = service.setActive("Abc1234", false, new Caller(username, admin));
+
+        assertThat(view.status()).isEqualTo(ShortUrlStatus.DEACTIVATED);
+        assertThat(view.shortCode()).isEqualTo("Abc1234");
+        assertThat(url.getStatus()).isEqualTo(ShortUrlStatus.DEACTIVATED);
+        assertThat(url.getUpdatedAt()).isEqualTo(NOW_MICROS);
+        verify(repository, times(1)).flush();
+        verify(transactionManager, times(1)).commit(transactionStatus);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"alice,false", "admin,true"})
+    void shouldReactivateADeactivatedLinkForItsOwnerOrAnAdmin(String username, boolean admin) {
+        ShortUrl url = stored("Abc1234", "alice", ShortUrlStatus.DEACTIVATED);
+
+        ShortUrlView view = service.setActive("Abc1234", true, new Caller(username, admin));
+
+        assertThat(view.status()).isEqualTo(ShortUrlStatus.ACTIVE);
+        assertThat(url.getStatus()).isEqualTo(ShortUrlStatus.ACTIVE);
+        assertThat(url.getUpdatedAt()).isEqualTo(NOW_MICROS);
+        verify(repository, times(1)).flush();
+        verify(transactionManager, times(1)).commit(transactionStatus);
+    }
+
+    @Test
+    void shouldLetAnAdminChangeAnotherUsersLinkInBothDirections() {
+        stored("Abc1234", "bob", ShortUrlStatus.ACTIVE);
+
+        assertThat(service.setActive("Abc1234", false, ADMIN).status()).isEqualTo(ShortUrlStatus.DEACTIVATED);
+        assertThat(service.setActive("Abc1234", true, ADMIN).status()).isEqualTo(ShortUrlStatus.ACTIVE);
+        verify(repository, times(2)).flush();
+    }
+
+    @Test
+    void shouldReturnTheClickDataReadInTheTransactionUnchanged() {
+        ShortUrl url = stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        ReflectionTestUtils.setField(url, "clickCount", 7L);
+        ReflectionTestUtils.setField(url, "lastAccessedAt", NOW_MICROS);
+
+        ShortUrlView view = service.setActive("Abc1234", false, ALICE);
+
+        assertThat(view.clickCount()).isEqualTo(7L);
+        assertThat(view.lastAccessedAt()).isEqualTo(NOW_MICROS);
+    }
+
+    @Test
+    void shouldRunTheStepsInOrderGetTransactionFindFlushCommit() {
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+
+        service.setActive("Abc1234", false, ALICE);
+
+        InOrder order = inOrder(transactionManager, repository);
+        order.verify(transactionManager).getTransaction(any());
+        order.verify(repository).findByShortCode("Abc1234");
+        order.verify(repository).flush();
+        order.verify(transactionManager).commit(transactionStatus);
+        verify(transactionManager, never()).rollback(any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void shouldRunSetActiveAndDeleteInARequiredReadWriteTransaction(boolean deleteInstead) {
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+
+        if (deleteInstead) {
+            service.delete("Abc1234", ADMIN);
+        } else {
+            service.setActive("Abc1234", false, ALICE);
+        }
+
+        ArgumentCaptor<TransactionDefinition> definition = ArgumentCaptor.forClass(TransactionDefinition.class);
+        verify(transactionManager, times(1)).getTransaction(definition.capture());
+        assertThat(definition.getValue().getPropagationBehavior())
+                .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRED);
+        assertThat(definition.getValue().isReadOnly()).isFalse();
+    }
+
+    @ParameterizedTest
+    @CsvSource({"DEACTIVATED,false", "ACTIVE,true"})
+    void shouldRollBackWithoutFlushingWhenTheTransitionIsRedundant(ShortUrlStatus current, boolean active) {
+        ShortUrl url = stored("Abc1234", "alice", current);
+        Instant updatedBefore = url.getUpdatedAt();
+
+        Class<? extends Exception> expected = active
+                ? ShortUrlAlreadyActiveException.class : ShortUrlAlreadyDeactivatedException.class;
+        assertThatThrownBy(() -> service.setActive("Abc1234", active, ALICE)).isExactlyInstanceOf(expected);
+        assertThatThrownBy(() -> service.setActive("Abc1234", active, ADMIN)).isExactlyInstanceOf(expected);
+
+        assertThat(url.getStatus()).isEqualTo(current);
+        assertThat(url.getUpdatedAt()).isEqualTo(updatedBefore);
+        verify(repository, never()).flush();
+        verify(transactionManager, times(2)).rollback(transactionStatus);
+        verify(transactionManager, never()).commit(any());
+        // Positive control: the opposite transition on the same kind of row does write.
+        ShortUrl other = stored("Xyz9876", "alice", current);
+        service.setActive("Xyz9876", !active, ALICE);
+        assertThat(other.getStatus()).isNotEqualTo(current);
+        verify(repository, times(1)).flush();
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ShortUrlStatus.class, names = {"ACTIVE", "DEACTIVATED"})
+    void shouldThrowNotFoundAndNeverFlushForANonOwnerUserInBothDirections(ShortUrlStatus current) {
+        ShortUrl url = stored("Abc1234", "alice", current);
+
+        assertThatThrownBy(() -> service.setActive("Abc1234", true, BOB))
+                .isExactlyInstanceOf(ShortUrlNotFoundException.class);
+        assertThatThrownBy(() -> service.setActive("Abc1234", false, BOB))
+                .isExactlyInstanceOf(ShortUrlNotFoundException.class);
+
+        assertThat(url.getStatus()).isEqualTo(current);
+        verify(repository, never()).flush();
+        verify(transactionManager, never()).commit(any());
+        verify(transactionManager, times(2)).rollback(transactionStatus);
+    }
+
+    @Test
+    void shouldThrowNotFoundForADeletedLinkForOwnerNonOwnerAndAdminInBothDirections() {
+        ShortUrl url = stored("Abc1234", "alice", ShortUrlStatus.DELETED);
+
+        for (Caller caller : List.of(ALICE, BOB, ADMIN)) {
+            for (boolean active : new boolean[] {true, false}) {
+                assertThatThrownBy(() -> service.setActive("Abc1234", active, caller))
+                        .isExactlyInstanceOf(ShortUrlNotFoundException.class);
+            }
+        }
+
+        assertThat(url.getStatus()).isEqualTo(ShortUrlStatus.DELETED);
+        verify(repository, times(6)).findByShortCode("Abc1234");
+        verify(repository, never()).flush();
+    }
+
+    @Test
+    void shouldThrowNotFoundForAnUnknownCodeInBothDirections() {
+        when(repository.findByShortCode("Nope123")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.setActive("Nope123", false, ALICE))
+                .isInstanceOf(ShortUrlNotFoundException.class);
+        assertThatThrownBy(() -> service.setActive("Nope123", true, ADMIN))
+                .isInstanceOf(ShortUrlNotFoundException.class);
+
+        verify(repository, never()).flush();
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"", "ab", "abcdefghijklmnopqrstuvwxyzABCDEFG", "a-b", "abc ", "abcé", "abc\n"})
+    void shouldThrowNotFoundWithoutAnyRepositoryCallForAMalformedCodeOnSetActive(String code) {
+        assertThatThrownBy(() -> service.setActive(code, false, ALICE)).isInstanceOf(ShortUrlNotFoundException.class);
+        assertThatThrownBy(() -> service.setActive(code, true, ADMIN)).isInstanceOf(ShortUrlNotFoundException.class);
+
+        verifyNoInteractions(repository);
+    }
+
+    @Test
+    void shouldTakeTheTimestampFromTheClockExactlyOncePerRequest() {
+        Clock counting = mock(Clock.class);
+        when(counting.instant()).thenReturn(NOW);
+        ShortUrlService counted = new ShortUrlService(repository, generator, new UrlValidator("https://short.example"),
+                new AliasPolicy(List.of()), counting, new ShortCodeProperties(7, 5), transactionManager);
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+
+        counted.setActive("Abc1234", false, ALICE);
+
+        verify(counting, times(1)).instant();
+    }
+
+    @Test
+    void shouldTakeTheTimestampFromTheClockExactlyOncePerDeleteRequest() {
+        Clock counting = mock(Clock.class);
+        when(counting.instant()).thenReturn(NOW);
+        ShortUrlService counted = new ShortUrlService(repository, generator, new UrlValidator("https://short.example"),
+                new AliasPolicy(List.of()), counting, new ShortCodeProperties(7, 5), transactionManager);
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+
+        counted.delete("Abc1234", ADMIN);
+
+        verify(counting, times(1)).instant();
+    }
+
+    // ---- US-009: flush and catch placement (AC11, D35, D87)
+
+    @Test
+    void shouldTranslateAnObjectOptimisticLockingFailureFromFlushAndRollBackWithoutCommit() {
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        ObjectOptimisticLockingFailureException conflict =
+                new ObjectOptimisticLockingFailureException(ShortUrl.class, 1L);
+        doThrow(conflict).when(repository).flush();
+
+        assertThatThrownBy(() -> service.setActive("Abc1234", false, ALICE))
+                .isExactlyInstanceOf(ShortUrlConcurrentModificationException.class)
+                .hasCause(conflict)
+                .hasMessage("Short URL was modified concurrently");
+
+        verify(repository, times(1)).flush();
+        verify(transactionManager, times(1)).rollback(transactionStatus);
+        verify(transactionManager, never()).commit(any());
+    }
+
+    @Test
+    void shouldTranslateAJpaOptimisticLockingFailureFromFlushBecauseTheBaseClassIsCaught() {
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        JpaOptimisticLockingFailureException conflict =
+                new JpaOptimisticLockingFailureException(new OptimisticLockException());
+        doThrow(conflict).when(repository).flush();
+
+        assertThatThrownBy(() -> service.setActive("Abc1234", false, ALICE))
+                .isExactlyInstanceOf(ShortUrlConcurrentModificationException.class)
+                .hasCause(conflict);
+    }
+
+    @Test
+    void shouldTranslateTheBaseOptimisticLockingFailureItself() {
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        OptimisticLockingFailureException conflict = new OptimisticLockingFailureException("stale");
+        doThrow(conflict).when(repository).flush();
+
+        assertThatThrownBy(() -> service.setActive("Abc1234", false, ALICE))
+                .isExactlyInstanceOf(ShortUrlConcurrentModificationException.class)
+                .hasCause(conflict);
+    }
+
+    @Test
+    void shouldTranslateAnOptimisticLockingFailureThrownByCommitBecauseTheCatchIsOutsideTheTemplate() {
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        ObjectOptimisticLockingFailureException conflict =
+                new ObjectOptimisticLockingFailureException(ShortUrl.class, 1L);
+        doThrow(conflict).when(transactionManager).commit(transactionStatus);
+
+        assertThatThrownBy(() -> service.setActive("Abc1234", false, ALICE))
+                .isExactlyInstanceOf(ShortUrlConcurrentModificationException.class)
+                .hasCause(conflict);
+
+        verify(repository, times(1)).flush();
+        verify(transactionManager, times(1)).commit(transactionStatus);
+    }
+
+    @Test
+    void shouldNotTranslateADataAccessFailureFromFlushBecauseOnlyOptimisticLockingIsCaught() {
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        DataAccessResourceFailureException outage = new DataAccessResourceFailureException("db down");
+        doThrow(outage).when(repository).flush();
+
+        assertThatThrownBy(() -> service.setActive("Abc1234", false, ALICE)).isSameAs(outage);
+    }
+
+    @Test
+    void shouldNotTranslateAConstraintViolationFromFlushToAConflict() {
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        DataIntegrityViolationException check = violation("23514", "ck_short_url_deleted_consistency");
+        doThrow(check).when(repository).flush();
+
+        assertThatThrownBy(() -> service.setActive("Abc1234", false, ALICE)).isSameAs(check);
+    }
+
+    @Test
+    void shouldTranslateAnOptimisticLockingFailureFromFlushOnDeleteAndNotADataAccessFailure() {
+        ObjectOptimisticLockingFailureException conflict =
+                new ObjectOptimisticLockingFailureException(ShortUrl.class, 1L);
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        doThrow(conflict).when(repository).flush();
+
+        assertThatThrownBy(() -> service.delete("Abc1234", ADMIN))
+                .isExactlyInstanceOf(ShortUrlConcurrentModificationException.class)
+                .hasCause(conflict);
+        verify(transactionManager, never()).commit(any());
+
+        DataAccessResourceFailureException outage = new DataAccessResourceFailureException("db down");
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);      // a fresh entity: the first attempt changed the old one
+        doThrow(outage).when(repository).flush();
+        assertThatThrownBy(() -> service.delete("Abc1234", ADMIN)).isSameAs(outage);
+    }
+
+    @Test
+    void shouldTranslateAnOptimisticLockingFailureThrownByCommitOnDelete() {
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        ObjectOptimisticLockingFailureException conflict =
+                new ObjectOptimisticLockingFailureException(ShortUrl.class, 1L);
+        doThrow(conflict).when(transactionManager).commit(transactionStatus);
+
+        assertThatThrownBy(() -> service.delete("Abc1234", ADMIN))
+                .isExactlyInstanceOf(ShortUrlConcurrentModificationException.class)
+                .hasCause(conflict);
+    }
+
+    // ---- US-009: delete (AC5, AC6, AC7, AC8, D1, D3, D36, D46, D51)
+
+    @ParameterizedTest
+    @EnumSource(value = ShortUrlStatus.class, names = {"ACTIVE", "DEACTIVATED"})
+    void shouldSoftDeleteAnActiveOrDeactivatedLinkWithTheAdminUsernameAndClockTimeAndFlushOnce(ShortUrlStatus current) {
+        ShortUrl url = stored("Abc1234", "alice", current);
+
+        service.delete("Abc1234", ADMIN);
+
+        assertThat(url.getStatus()).isEqualTo(ShortUrlStatus.DELETED);
+        assertThat(url.getDeletedBy()).isEqualTo("admin");
+        assertThat(url.getDeletedAt()).isEqualTo(NOW_MICROS);
+        assertThat(url.getUpdatedAt()).isEqualTo(NOW_MICROS);
+        assertThat(url.getCreatedBy()).isEqualTo("alice");
+        verify(repository, times(1)).flush();
+        verify(transactionManager, times(1)).commit(transactionStatus);
+    }
+
+    @Test
+    void shouldStoreExactlyTheCallersUsernameAsDeletedByWhateverItIs() {
+        ShortUrl url = stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+
+        service.delete("Abc1234", new Caller("root-admin", true));
+
+        assertThat(url.getDeletedBy()).isEqualTo("root-admin");
+    }
+
+    @Test
+    void shouldRunDeleteStepsInOrderGetTransactionFindFlushCommit() {
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+
+        service.delete("Abc1234", ADMIN);
+
+        InOrder order = inOrder(transactionManager, repository);
+        order.verify(transactionManager).getTransaction(any());
+        order.verify(repository).findByShortCode("Abc1234");
+        order.verify(repository).flush();
+        order.verify(transactionManager).commit(transactionStatus);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"alice,false", "bob,false", "someone,false"})
+    void shouldThrowIllegalStateForANonAdminBeforeAnyLookupOrTransaction(String username, boolean admin) {
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        clearInvocations(repository, transactionManager);
+
+        assertThatThrownBy(() -> service.delete("Abc1234", new Caller(username, admin)))
+                .isExactlyInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> service.delete("no-such-code!", new Caller(username, admin)))
+                .isExactlyInstanceOf(IllegalStateException.class);
+
+        verify(repository, never()).findByShortCode(any());
+        verify(repository, never()).flush();
+        verifyNoInteractions(transactionManager);
+    }
+
+    @Test
+    void shouldThrowNotFoundForADeletedUnknownAndMalformedCodeWhenAdminDeletes() {
+        ShortUrl deleted = stored("Del1234", "alice", ShortUrlStatus.DELETED);
+        when(repository.findByShortCode("Nope123")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.delete("Del1234", ADMIN)).isExactlyInstanceOf(ShortUrlNotFoundException.class);
+        assertThatThrownBy(() -> service.delete("Nope123", ADMIN)).isExactlyInstanceOf(ShortUrlNotFoundException.class);
+        assertThatThrownBy(() -> service.delete("a-b", ADMIN)).isExactlyInstanceOf(ShortUrlNotFoundException.class);
+
+        assertThat(deleted.getDeletedBy()).isEqualTo(FIRST_ADMIN);       // first delete's values untouched
+        assertThat(deleted.getDeletedAt()).isEqualTo(EARLIER);
+        assertThat(deleted.getUpdatedAt()).isEqualTo(EARLIER);
+        verify(repository, times(1)).findByShortCode("Del1234");
+        verify(repository, times(1)).findByShortCode("Nope123");
+        verify(repository, never()).findByShortCode("a-b");
+        verify(repository, never()).flush();
+        verify(transactionManager, never()).commit(any());
+    }
+
+    @Test
+    void shouldNotAllowASecondDeleteToOverwriteTheFirstDeletesAuditValues() {
+        ShortUrl url = stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        service.delete("Abc1234", new Caller("admin", true));
+
+        assertThatThrownBy(() -> service.delete("Abc1234", new Caller("other-admin", true)))
+                .isExactlyInstanceOf(ShortUrlNotFoundException.class);
+
+        assertThat(url.getDeletedBy()).isEqualTo("admin");
+        verify(repository, times(1)).flush();
+    }
+
+    // ---- US-009: logging (D52, D64)
+
+    @Test
+    void shouldLogTheSuccessLinesWithTheCodeButNeverTheUsernameOrTheUrl() {
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        stored("Del1234", "alice", ShortUrlStatus.ACTIVE);
+
+        service.setActive("Abc1234", false, ALICE);
+        service.setActive("Abc1234", true, ALICE);
+        service.delete("Del1234", ADMIN);
+
+        List<String> messages = logs.list.stream().filter(e -> e.getLevel() == Level.INFO)
+                .map(ILoggingEvent::getFormattedMessage).toList();
+        // Positive capture first, so the absence checks below cannot pass vacuously.
+        assertThat(messages).containsExactly(
+                "Short URL deactivated: code=Abc1234",
+                "Short URL reactivated: code=Abc1234",
+                "Short URL deleted: code=Del1234");
+        assertThat(joined(logs)).doesNotContain("alice").doesNotContain("admin")
+                .doesNotContain("example.com").doesNotContain("https://");
+    }
+
+    @Test
+    void shouldLogAConflictAtInfoWithCodeAndActionOnly() {
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        doThrow(new ObjectOptimisticLockingFailureException(ShortUrl.class, 1L)).when(repository).flush();
+
+        assertThatThrownBy(() -> service.setActive("Abc1234", false, ALICE))
+                .isInstanceOf(ShortUrlConcurrentModificationException.class);
+        assertThatThrownBy(() -> service.setActive("Abc1234", true, ALICE))
+                .isInstanceOf(ShortUrlConcurrentModificationException.class);
+        assertThatThrownBy(() -> service.delete("Abc1234", ADMIN))
+                .isInstanceOf(ShortUrlConcurrentModificationException.class);
+
+        List<ILoggingEvent> conflicts = logs.list.stream()
+                .filter(e -> e.getFormattedMessage().contains("changed concurrently")).toList();
+        assertThat(conflicts).extracting(ILoggingEvent::getFormattedMessage).containsExactly(
+                "Short URL changed concurrently: code=Abc1234 action=DEACTIVATE",
+                "Short URL changed concurrently: code=Abc1234 action=REACTIVATE",
+                "Short URL changed concurrently: code=Abc1234 action=DELETE");
+        assertThat(conflicts).allSatisfy(e -> assertThat(e.getLevel()).isEqualTo(Level.INFO));
+        assertThat(logs.list).noneSatisfy(e -> assertThat(e.getLevel().isGreaterOrEqual(Level.WARN)).isTrue());
+        assertThat(joined(logs)).doesNotContain("alice").doesNotContain("admin").doesNotContain("https://");
+    }
+
+    @Test
+    void shouldNotLogASuccessLineWhenTheCommitFails() {
+        stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
+        stored("Del1234", "alice", ShortUrlStatus.ACTIVE);
+        doThrow(new ObjectOptimisticLockingFailureException(ShortUrl.class, 1L))
+                .when(transactionManager).commit(transactionStatus);
+
+        assertThatThrownBy(() -> service.setActive("Abc1234", false, ALICE))
+                .isInstanceOf(ShortUrlConcurrentModificationException.class);
+        assertThatThrownBy(() -> service.delete("Del1234", ADMIN))
+                .isInstanceOf(ShortUrlConcurrentModificationException.class);
+
+        // Positive capture: the conflict lines were logged, so the absence check is about the success lines.
+        assertThat(logs.list).anySatisfy(e -> assertThat(e.getFormattedMessage()).contains("changed concurrently"));
+        assertThat(joined(logs)).doesNotContain("deactivated").doesNotContain("reactivated")
+                .doesNotContain("deleted");
+    }
+
+    @Test
+    void shouldLogNothingAtInfoForARedundantTransition() {
+        stored("Abc1234", "alice", ShortUrlStatus.DEACTIVATED);
+
+        assertThatThrownBy(() -> service.setActive("Abc1234", false, ALICE))
+                .isInstanceOf(ShortUrlAlreadyDeactivatedException.class);
+
+        assertThat(logs.list).noneSatisfy(e -> assertThat(e.getLevel().isGreaterOrEqual(Level.INFO)).isTrue());
     }
 
     // ---- transaction boundary guard

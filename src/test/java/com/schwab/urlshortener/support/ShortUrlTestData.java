@@ -89,6 +89,31 @@ public final class ShortUrlTestData {
                 + " FROM short_url WHERE short_code = ?", code);
     }
 
+    /**
+     * The lifecycle-relevant columns of one row, read with explicit types. Unlike {@link #rowState}, which
+     * {@code GetShortUrlIT} compares as a raw map, this is a typed value so tests can compare and inspect fields.
+     */
+    public record LifecycleState(String status, long version, Instant updatedAt, Instant deletedAt,
+            String deletedBy, long clickCount, Instant lastAccessedAt) {
+    }
+
+    /** Reads {@link LifecycleState} for exactly one existing row; throws if there is not exactly one. */
+    public LifecycleState lifecycleState(String code) {
+        return jdbc.queryForObject("SELECT status, version, updated_at, deleted_at, deleted_by, click_count,"
+                + " last_accessed_at FROM short_url WHERE short_code = ?", (rs, row) -> new LifecycleState(
+                        rs.getString("status"), rs.getLong("version"), instant(rs.getTimestamp("updated_at")),
+                        instant(rs.getTimestamp("deleted_at")), rs.getString("deleted_by"),
+                        rs.getLong("click_count"), instant(rs.getTimestamp("last_accessed_at"))), code);
+    }
+
+    public int rowCount() {
+        return count("SELECT count(*) FROM short_url");
+    }
+
+    private static Instant instant(Timestamp timestamp) {
+        return timestamp == null ? null : timestamp.toInstant();
+    }
+
     public Instant createdAt(String code) {
         return jdbc.queryForObject("SELECT created_at FROM short_url WHERE short_code = ?", Timestamp.class, code)
                 .toInstant();

@@ -6,7 +6,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.Instant;
 
 /**
- * The short URL resource, shared by create (US-006) and details (US-007) (D58). All eight fields are
+ * The short URL resource, shared by create (US-006), details (US-007) and update (US-009) (D58). All eight fields are
  * always present; {@code lastAccessedAt} is {@code null} until the first click. There is no
  * {@code createdBy}, {@code id}, {@code updatedAt} or {@code version}.
  */

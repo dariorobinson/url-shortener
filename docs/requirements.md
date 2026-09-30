@@ -1,6 +1,6 @@
 # Requirements
 
-Last updated: 2026-09-29 (G3 US-008, D85). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
+Last updated: 2026-09-30 (G2 US-009, D86–D90). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
 
 ## Functional requirements
 
@@ -120,6 +120,11 @@ Last updated: 2026-09-29 (G3 US-008, D85). Decisions below were made by the engi
 | D83 | No DB CHECK for reserved words | Reserved words are enforced only by `AliasPolicy` (D29, D48), with no database CHECK, so the list stays configurable. |
 | D84 | Encoded URL length (extends D11) | Create also rejects an `originalUrl` whose D75-encoded (ASCII wire) form exceeds **2048 bytes**, with `400 INVALID_URL`. This is in addition to D11's 2048-character limit. `UrlValidator` computes it with the same encoder the redirect uses, in one shared helper, so the rule is defined once. The redirect's `Location` therefore never exceeds 2048 bytes. Tomcat's default `max-http-response-header-size` is unchanged. |
 | D85 | D84 is enforced in the application only | The D84 encoded-length limit is enforced only at create, in `UrlValidator`, with **no database CHECK**. A row inserted by raw SQL can still hold a URL whose encoded form breaks the redirect (Tomcat returns a bare 500 for that link, and the URL is not logged). This is an accepted gap, like D83. The application is the only writer. |
+| D86 | Who loses a concurrent deactivation (AC11) | Either `409 CONCURRENT_MODIFICATION` (the requests overlap and the optimistic lock catches it) or `409 SHORT_URL_ALREADY_DEACTIVATED` (the requests serialise). The race test accepts either and asserts exactly one 200 and `version` N+1. Deterministic tests pin each path: a row-lock test (commit and rollback variants) and a serialised test. |
+| D87 | 409s involving DELETE | DELETE can return `409 CONCURRENT_MODIFICATION` (D35). A PATCH that loses to a concurrent DELETE gets 409, not 404; a re-read then gives 404. |
+| D88 | PATCH media type | PATCH accepts `application/json` only. `application/merge-patch+json` and other types get `415 UNSUPPORTED_MEDIA_TYPE`. |
+| D89 | Strict booleans | Jackson's scalar coercion is **disabled for the Boolean type**. Only real JSON `true`/`false` are accepted; `"false"`, `0` and `1` get `400 MALFORMED_REQUEST`. A missing or `null` `active` gets `400 VALIDATION_FAILED` (`@NotNull`). The setting is scoped to Boolean and does not change create (no boolean inputs) or responses. |
+| D90 | Click data in the PATCH response | The PATCH 200 body shows click data as read inside the PATCH transaction. A click that lands during the PATCH appears on the next GET. |
 
 ## Environment and platform decisions
 

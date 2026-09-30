@@ -102,6 +102,9 @@ Base package: `com.schwab.urlshortener`. `JAVA_HOME` must point to JDK 25.
 - A test whose name claims to distinguish two behaviours (e.g. code points vs UTF-16 units) includes an input on which they differ; if a later rule makes the difference unobservable, rename or remove the test and record it.
 - Any change to a Done story's tests is listed test by test (updated, renamed, removed, added) in that story's post-completion section.
 - Every review-finding ID raised in a round has a row in the story's Review log with its resolution, including those the orchestrator fixes.
+- Every `@WebMvcTest` imports `SecuritySliceTestConfiguration`, so it gets the real security filter chain and production Jackson settings (D89); slices never import `SecurityConfig`, `UserAccountsConfig`, or `JacksonConfig` individually.
+- A "value is never logged" assertion checks every form the value takes on the way out: raw and encoded (e.g. D75 percent-encoding).
+- Test fixtures that seed prior state (transitions, audit fields) use a timestamp and actor different from those the code under test will write, so "unchanged" assertions can fail.
 
 ## Post-task report (required at every story completion)
 

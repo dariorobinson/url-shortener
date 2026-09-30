@@ -51,6 +51,12 @@ As the system, I want every successful GET redirect on an active link to be reco
 - The click time must be taken from the injected `Clock` and **truncated to microseconds**, matching D45 and PostgreSQL's `timestamptz` resolution.
 - Any read of the `ShortUrl` after the click `UPDATE` in the same persistence context must not see stale values. Use `@Modifying(clearAutomatically = true)` or run the click recording in its own transaction.
 
+## Carry-over from US-009 (engineer-approved at US-009 G3)
+- **N1 (NIT, mid-engineer):** in `ShortUrlServiceTest`, an ACTIVE fixture is still created at `NOW_MICROS`, so the `ACTIVE,true` case of `shouldRollBackWithoutFlushingWhenTheTransitionIsRedundant` can't fail on `updatedAt`. Create the fixture at an earlier instant.
+- **N2, Javadoc half (NIT, mid-engineer):** the `JacksonConfig` Javadoc should say that `String`, `EmptyString`, `Integer` and `EmptyArray` are the shapes Jackson consults for Boolean, and that `Float` and `Array` are set only as a precaution.
+- **Design input (US-009 review):** `NoTransactionalAnnotationIT` scans application beans, but it can't see annotations on repository **interface** methods, because the proxy target is `SimpleJpaRepository`. If the atomic click UPDATE uses `@Modifying` (and possibly `@Transactional`) on a repository method, it needs its own guard or test. That covers its transaction boundary, the D12 fail-open behaviour, and never touching `version` or `updated_at` (D16, D27).
+- **Design input (controllable test Clock, engineer-approved at US-009 G3, from QA observation (b)):** AC1 needs an exact `clicked_at` == `Clock` time assertion in the ITs, which the real system clock cannot give. Add a controllable `Clock` bean (for example a mutable or offset clock) to the shared test configuration that `IntegrationTestBase` imports. Register it once and reset it per test and per Cucumber scenario. Production code keeps the injected `Clock` (D45). It must not create a second Spring context: no change in `IntegrationTestBase` subclasses, per the CLAUDE.md review rule.
+
 ## Design note
 *(architect)*
 

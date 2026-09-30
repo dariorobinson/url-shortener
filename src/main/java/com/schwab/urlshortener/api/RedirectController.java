@@ -27,8 +27,8 @@ import org.springframework.web.bind.annotation.RestController;
  * HEAD is served by this GET mapping (Spring MVC) and is never counted as a click (D9, D18).
  *
  * <p>The {@code Location} value is a raw string header: it is never built from a parsed URI, a redirect view or
- * the servlet redirect helper, so the stored text is not re-derived. It is encoded by the shared {@link LocationEncoder} (D75, D84). The query string of the short link is
- * never read and never forwarded (D79).
+ * the servlet redirect helper, so the stored text is not re-derived. It is encoded by the shared
+ * {@link LocationEncoder} (D75, D84). The query string of the short link is never read and never forwarded (D79).
  *
  * <p>Public API text deliberately omits decision IDs: D75 (encoding), D76 (no-store), D79 (query ignored) and
  * D55 (bad credentials give 401) are recorded here instead.

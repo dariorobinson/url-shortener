@@ -18,7 +18,9 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
@@ -136,6 +138,52 @@ class ShortUrlRepositoryTest {
         ShortUrl reloaded = repository.findById(id).orElseThrow();
         assertThat(reloaded.getClickCount()).isEqualTo(5L);
         assertThat(reloaded.getLastAccessedAt()).isEqualTo(T1);
+    }
+
+    @Test
+    void shouldNotOverwriteSqlUpdatedAnalyticsWhenEntityIsSoftDeleted() {
+        ShortUrl saved = repository.saveAndFlush(newActive("abc1234", T0));
+        Long id = saved.getId();
+        testEntityManager.clear();
+
+        ShortUrl loaded = repository.findByShortCode("abc1234").orElseThrow();
+        jdbcTemplate.update("UPDATE short_url SET click_count = 5, last_accessed_at = ? WHERE id = ?",
+                OffsetDateTime.ofInstant(T1, ZoneOffset.UTC), id);
+
+        loaded.softDelete("admin", T2);
+        repository.flush();
+
+        // The write happened: status, the three D44 columns and the version prove it (D16, D27).
+        assertThat(queryColumn("status", String.class, id)).isEqualTo("DELETED");
+        assertThat(queryColumn("deleted_by", String.class, id)).isEqualTo("admin");
+        assertThat(queryInstant("deleted_at", id)).isEqualTo(T2);
+        assertThat(queryInstant("updated_at", id)).isEqualTo(T2);
+        assertThat(queryColumn("version", Long.class, id)).isEqualTo(1L);
+        // And the analytics written by SQL in between survived it.
+        assertThat(queryColumn("click_count", Long.class, id)).isEqualTo(5L);
+        assertThat(queryInstant("last_accessed_at", id)).isEqualTo(T1);
+    }
+
+    @Test
+    void shouldThrowOptimisticLockingFailureWhenTheVersionChangedAfterLoad() {
+        ShortUrl saved = repository.saveAndFlush(newActive("abc1234", T0));
+        Long id = saved.getId();
+        testEntityManager.clear();
+
+        ShortUrl loaded = repository.findByShortCode("abc1234").orElseThrow();
+        // Another writer's version bump, in the same transaction: the row moves on while this entity holds version 0.
+        int updated = jdbcTemplate.update("UPDATE short_url SET version = version + 1 WHERE id = ?", id);
+        assertThat(updated).isEqualTo(1);
+        loaded.deactivate(T1);
+
+        // Spring's base type is what the service catches (D35); the Hibernate path yields the object subclass.
+        assertThatThrownBy(() -> repository.flush())
+                .isInstanceOf(OptimisticLockingFailureException.class)
+                .isInstanceOf(ObjectOptimisticLockingFailureException.class);
+
+        // The raw write happened (version moved) and the entity write did not (status is still ACTIVE).
+        assertThat(queryColumn("version", Long.class, id)).isEqualTo(1L);
+        assertThat(queryColumn("status", String.class, id)).isEqualTo("ACTIVE");
     }
 
     @ParameterizedTest

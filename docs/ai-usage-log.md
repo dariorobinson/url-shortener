@@ -829,8 +829,93 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
 
 - **Date:** 2026-09-30
 - **Task:** Commit C5a: US-008, its docs (D75–D85, the US-004 post-completion note, carry-overs for US-009, US-014 and US-015), and the `CLAUDE.md` review rules (six US-008 rules).
-- **Engineer decision:** *(pending G4; not pre-approved)*
+- **Engineer decision:** "approve all" (relayed). **Accepted:** commit C5a exactly as staged. **Committed as `2ef7a20`** (parent `a94d41c`, 37 files). The main session verifies and pushes (engineer-approved).
+- **Independent verification by the main session, before approval:** re-verified the staging (37 files, nothing unstaged, no forbidden files, HEAD `a94d41c`).
+- **Validation:** the working tree was clean after the commit.
 - **Rationale:** *(engineer to add)*
 - **Rationale:** *(engineer to add)*
 - **Validation:** the orchestrator ran `./mvnw -q clean verify`: exit 0, Surefire 702/0 and Failsafe 454/0 (run/failed), including 130 Cucumber scenarios, merged LINE coverage 449/451. There is 1 intentional `HeadersTooLargeException` in the log, with no URL text.
 - **Session interruption:** the previous orchestrator run ended with an API billing error ("Credit balance is too low") after C5a was staged and before the G4 checkpoint was shown. The engineer resolved it and resumed the orchestrator with "A". That meant resume only; it was not approval of C5a. The main session had checked the state: 37 files staged, nothing unstaged, no forbidden files, and a rebuild of the staged state gave exit 0, Surefire 702/0, Failsafe 454/0. HEAD was still `a94d41c`. The orchestrator re-checked (HEAD `a94d41c`, 37 staged, nothing unstaged) and presented G4 without redoing any work.
+
+## Entry 27 — US-009 deactivate, reactivate, soft delete (design)
+
+- **Date:** 2026-09-30
+- **Task:** Architect design note for US-009. The story needs design approval, so it stops at G2.
+- **Inputs:**
+  - PATCH `{"active": boolean}` (D34), with D26's 409s for a redundant change.
+  - `@Version` conflicts give 409 `CONCURRENT_MODIFICATION` (D35), with the open question of which errorCode the losing concurrent request gets.
+  - Soft DELETE is ADMIN-only, with 403 before any lookup (D1, D3, D36, D46).
+  - D70's 406 comes before any state change.
+  - Reuse `Caller`/`loadVisible` (D4).
+  - No `@Transactional`.
+  - PATCH never overwrites `click_count` or `last_accessed_at` (D16, D27).
+  - `deleted_by` is the authenticated principal.
+  - The `SecurityConfig` rules.
+  - The carry-over from US-008.
+- **AI recommendation (architect):**
+  - **PATCH:** `UpdateShortUrlRequest(@NotNull Boolean active)`, `application/json` only, admitted by rule 6. It returns 200 with the D58 body and the D26 409s. It reuses `loadVisible`. `ShortUrlDeletedException` is added to the existing not-found handler, keeping the 404 byte-identical.
+  - **DELETE:** admitted by rule 5 (ADMIN; a USER gets 403 before any handler). It returns 204. `softDelete(caller.username(), clock)`, so `deleted_by` is the admin username. A service-level guard throws `IllegalStateException` for a non-admin.
+  - **Transactions:** a third `readWrite` `TransactionTemplate`, still no `@Transactional`. `repository.flush()` is called explicitly inside the callback. `OptimisticLockingFailureException` is caught outside the template and translated to `ShortUrlConcurrentModificationException`, which maps to 409 `CONCURRENT_MODIFICATION`. This avoids Hibernate's commit-time `HHH000346` ERROR log.
+  - **Concurrency:** under READ COMMITTED, the AC11 loser gets either `CONCURRENT_MODIFICATION` (overlap) or `SHORT_URL_ALREADY_DEACTIVATED` (serialised). DELETE can also get 409. Clicks never conflict and are never overwritten (D16, D27).
+- **Engineer decisions requested:**
+  - **Q1:** the AC11 race test accepts either code, plus two deterministic tests.
+  - **Q2:** DELETE can return 409, and a PATCH that loses to a DELETE gets 409.
+  - **Q3:** `application/merge-patch+json` gets 415.
+  - **Q4:** Jackson's default coercion (`"false"`, `0` and `1` are accepted as booleans).
+  - **Q5:** click data in the PATCH 200 is as of that transaction.
+- **Engineer decision:** "approve all strict booleans" (relayed). **Accepted:**
+  - Q1–Q5 recorded as **D86–D90**, and the rest of the design note (L2–L8) as written.
+  - **Q4 (D89):** **Modified**. The orchestrator's recommendation was adopted: disable scalar coercion for the Boolean type. The architect's Jackson-default alternative was **not adopted**. QA pins the `"false"`, `0`, `1` and `null` cases, and the change must be shown not to affect create.
+- **Engineer guardrails:**
+  - Exactly one `flush()` inside the callback, and a catch around `readWrite.execute` for exactly `OptimisticLockingFailureException`.
+  - No `@Transactional`, no `@DynamicUpdate`, and no detached saves or JPQL updates on `short_url`.
+  - The race test asserts `version` N+1.
+  - Every "nothing changed" check has a positive control.
+  - No `HHH000346` ERROR line for an expected conflict.
+  - No usernames or URLs in logs.
+  - Commit C5b is not pre-approved.
+- **C5a push:** the main session verified `2ef7a20` (parent `a94d41c`, 37 files, no forbidden files, trailer present) and **pushed it; `origin/main` is now `2ef7a20`**.
+- **Rationale:** *(engineer to add)*
+- **Validation:** the architect cited Spring 6.2.19, Spring Data JPA 3.5, Hibernate 6.6.53, PostgreSQL 18 and jackson-databind 2.19. It flagged that the `HHH000346` ERROR-log claim is second-hand, from forum and vendor reports, and that the IT asserts it directly. The orchestrator confirmed that only the US-009 Design note and `architecture.md` changed.
+- **Mid-engineer:**
+  - **Built:** `UpdateShortUrlRequest`; the PATCH and DELETE handlers; `setActive` and `delete` on a `readWrite` template with one flush each and a catch for exactly `OptimisticLockingFailureException`; `ShortUrlConcurrentModificationException`; `JacksonConfig` (D89, a Boolean-only `CoercionConfig`); the N1/N4–N7 carry-over, with the US-004 test-by-test listing.
+  - **Orchestrator check:** the guardrails were confirmed on disk.
+  - **Jackson version:** 2.21.4 is resolved from the Boot BOM; the design cited 2.19.
+- **QA-tester:**
+  - **Built:** `LifecycleIT` (97 tests), `LifecycleConcurrencyIT` (12), `NoTransactionalAnnotationIT`, a 37-scenario lifecycle feature, the OpenAPI pins, the re-pins, and N2. No defects.
+  - **Race results:** 40 of 40 rounds gave `CONCURRENT_MODIFICATION` for QA; the reviewer's run gave 9 and 1. Both codes are reachable.
+  - **Observations:** the 405 `Allow` header leaves out HEAD (Spring behaviour); there is no fixed Clock in ITs; D89 is stricter than its wording; AC11 Cucumber checks the outcome only.
+- **Senior review, round 1: APPROVE.**
+
+  | ID | Severity | Finding |
+  |---|---|---|
+  | R1 | SHOULD | `JacksonConfig` reached web slices only through one test's import |
+  | R2 | SHOULD | Fixtures made some "unchanged" assertions impossible to fail |
+  | R3 | SHOULD | The N2 log check missed the encoded URL form |
+  | R4 | SHOULD | Inline fully qualified names |
+  | R5 | SHOULD | A K-id in a comment |
+  | R6 | SHOULD | Stale docs |
+  | R7–R14 | NIT | Various |
+
+  The reviewer accepted QA's observations (a)–(d) and deferred a controllable Clock to US-012. Fixes: the mid-engineer did R1, R2, R4, R5, R7 and R9–R13; the qa-tester did R3, R8 and R7; the orchestrator did R6 and R14.
+- **Senior review, round 2: APPROVE.** New NITs N1 and N2. The orchestrator fixed N2's documentation half.
+- **Engineer decision:** "approve all" (relayed). **Accepted:**
+  - US-009 is Done.
+  - QA observations (a)–(d) are accepted, and a controllable test Clock is added to the design inputs of the first story that needs it (placed by the planner).
+  - N1 and N2's Javadoc half go to US-010, along with the `NoTransactionalAnnotationIT` repository-interface gap as a design input.
+  - Review rules 4, 3 and 5 go into `CLAUDE.md` (the main session added them, for C5b). Rules 1 and 2 are **Rejected**: rule 4 is the concrete form of 1, and rule 5 generalises 2.
+  - C5b is not pre-approved.
+- **Independent verification by the main session:**
+  - Re-ran the G3 build: exit 0, Surefire 842/0, Failsafe 611/0 (run/failed), 0 `HHH000346` lines.
+  - No `@DynamicUpdate` or `@Modifying` in `src/main`, and `@Transactional` appears only in Javadoc.
+  - Exactly one `flush()` per write method, each followed by an `OptimisticLockingFailureException` catch (`ShortUrlService` lines 132/135 and 160/162).
+- **Rationale:** *(engineer to add)*
+- **Validation:** the orchestrator ran `./mvnw -q clean verify`: exit 0, Surefire 842/0 and Failsafe 611/0 (run/failed), including 167 Cucumber scenarios, merged LINE coverage 498/500, and 0 `HHH000346` lines.
+- **Controllable test Clock placement (planner):** placed in **US-010**'s design inputs, not US-012, which is docs-only. US-010 AC1 needs an exact `clicked_at` equal to the Clock time in the ITs, and US-010 comes before US-011 and the expiration stories. US-011 can seed timestamps directly. A pointer was added to `PLACEHOLDER-expiration.md` for the future expiration stories. The planner noted that the US-010 design gate should settle who owns the shared test-configuration change: the qa-tester's support code, implemented by the mid-engineer.
+
+## Entry 28 — Commit C5b (G4)
+
+- **Date:** 2026-09-30
+- **Task:** Commit C5b: US-009, its docs (D86–D90, the US-004 test-by-test note, the US-010 carry-over and design inputs, the expiration placeholder pointer), and the three `CLAUDE.md` review rules from US-009.
+- **Engineer decision:** *(pending G4; not pre-approved)*
+- **Rationale:** *(engineer to add)*

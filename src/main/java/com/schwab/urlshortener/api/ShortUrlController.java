@@ -2,6 +2,7 @@ package com.schwab.urlshortener.api;
 
 import com.schwab.urlshortener.api.dto.CreateShortUrlRequest;
 import com.schwab.urlshortener.api.dto.ShortUrlResponse;
+import com.schwab.urlshortener.api.dto.UpdateShortUrlRequest;
 import com.schwab.urlshortener.api.error.ErrorResponseSchema;
 import com.schwab.urlshortener.config.OpenApiConfig;
 import com.schwab.urlshortener.security.Role;
@@ -20,24 +21,31 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Short URL management API. {@code POST /api/v1/urls} and {@code GET /api/v1/urls/{code}} are admitted by the
- * filter-chain rule {@code /api, /api/** -> hasRole(USER)} (rule 6 in the architecture access table; ADMIN passes
- * through the role hierarchy, D3). Anonymous callers get 401 from the entry point (D30).
+ * Short URL management API. {@code POST /api/v1/urls}, {@code GET /api/v1/urls/{code}} and
+ * {@code PATCH /api/v1/urls/{code}} are admitted by the filter-chain rule {@code /api, /api/** -> hasRole(USER)}
+ * (rule 6 in the architecture access table; ADMIN passes through the role hierarchy, D3).
+ * {@code DELETE /api/v1/urls/**} is admitted by rule 5, {@code hasRole(ADMIN)}, which comes first: a USER gets 403
+ * before any handler runs, whatever the code (D3). Anonymous callers get 401 from the entry point (D30).
  *
  * <p>Never annotate this class or its methods with {@code @Transactional}: the service owns its transactions
- * (one {@code REQUIRES_NEW} per insert attempt, a read-only template for reads). Ownership rules (D4, D13) live
+ * (one {@code REQUIRES_NEW} per insert attempt, a read-only template for reads, a read-write template for
+ * PATCH and DELETE). Ownership rules (D4, D13) live
  * only in the service; the controller merely tells it who is calling.
  *
  * <p>The class-level {@code produces = application/json} (D70) makes an unacceptable {@code Accept} header fail
@@ -138,6 +146,90 @@ class ShortUrlController {
                     schema = @Schema(implementation = ErrorResponseSchema.class)))
     ShortUrlResponse get(@PathVariable("code") String code, @Parameter(hidden = true) Authentication authentication) {
         return ShortUrlResponse.from(service.get(code, callerOf(authentication)), links);
+    }
+
+    @PatchMapping(path = "/{code}", consumes = MediaType.APPLICATION_JSON_VALUE)   // D88: application/json only
+    @Operation(summary = "Deactivate or reactivate a short URL",
+            description = """
+                    Body {"active": false} deactivates the short URL and {"active": true} reactivates it. Only the \
+                    creator or an ADMIN may do it; anyone else gets the same 404 SHORT_URL_NOT_FOUND as for an \
+                    unknown, malformed or deleted code. A deactivated link's public redirect returns 404 until it \
+                    is reactivated. Only a JSON boolean is accepted for active: a string or a number gives 400 \
+                    MALFORMED_REQUEST. A redundant change (deactivating a deactivated link, reactivating an active \
+                    one) gives 409 SHORT_URL_ALREADY_DEACTIVATED or SHORT_URL_ALREADY_ACTIVE. 409 \
+                    CONCURRENT_MODIFICATION means another request changed the link at the same moment: read it \
+                    with GET and retry if still needed. Only application/json is accepted as the request type.""",
+            parameters = @Parameter(name = "code", in = ParameterIn.PATH,
+                    description = "The short code: Base62, 3 to 32 characters, case-sensitive. A value that can "
+                            + "never be a code gets 404."),
+            requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(required = true,
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                            schema = @Schema(implementation = UpdateShortUrlRequest.class))))
+    @ApiResponse(responseCode = "200", description = "The short URL after the change",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ShortUrlResponse.class)))
+    @ApiResponse(responseCode = "400", description = "VALIDATION_FAILED or MALFORMED_REQUEST",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "404",
+            description = "SHORT_URL_NOT_FOUND. The code is unknown, malformed, deleted, or not the caller's; the "
+                    + "responses are indistinguishable.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "406",
+            description = "NOT_ACCEPTABLE. The only response type is application/json; an unacceptable Accept is "
+                    + "rejected before anything changes. An unparseable Accept also gets 406, with no body.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "409",
+            description = "SHORT_URL_ALREADY_DEACTIVATED, SHORT_URL_ALREADY_ACTIVE or CONCURRENT_MODIFICATION",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "415", description = "UNSUPPORTED_MEDIA_TYPE. Only application/json is accepted.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    ShortUrlResponse update(@PathVariable("code") String code, @Valid @RequestBody UpdateShortUrlRequest request,
+            @Parameter(hidden = true) Authentication authentication) {
+        return ShortUrlResponse.from(service.setActive(code, request.active(), callerOf(authentication)), links);
+    }
+
+    @DeleteMapping("/{code}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Operation(summary = "Delete a short URL (ADMIN only)",
+            description = """
+                    The delete is soft: the row is kept for audit. Afterwards the code gets 404 everywhere, for \
+                    ADMIN too, and can never be reused (a create with that alias gets 409 ALIAS_ALREADY_EXISTS). \
+                    Deleting a DEACTIVATED link is allowed. A USER always gets 403 ACCESS_DENIED, whatever the code \
+                    and whoever owns it. 409 CONCURRENT_MODIFICATION means another request changed the link at the \
+                    same moment: read it with GET and retry if still needed.""",
+            parameters = @Parameter(name = "code", in = ParameterIn.PATH,
+                    description = "The short code: Base62, 3 to 32 characters, case-sensitive. A value that can "
+                            + "never be a code gets 404."))
+    @ApiResponse(responseCode = "204", description = "Deleted; no content")
+    @ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "403", description = "ACCESS_DENIED. Only an ADMIN may delete.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "404",
+            description = "SHORT_URL_NOT_FOUND. The code is unknown, malformed or already deleted; the responses "
+                    + "are indistinguishable.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "406",
+            description = "NOT_ACCEPTABLE. The only response type is application/json; an unacceptable Accept is "
+                    + "rejected before anything changes. An unparseable Accept also gets 406, with no body.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "409", description = "CONCURRENT_MODIFICATION",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    void delete(@PathVariable("code") String code, @Parameter(hidden = true) Authentication authentication) {
+        service.delete(code, callerOf(authentication));
     }
 
     /**

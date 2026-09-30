@@ -1,9 +1,13 @@
 package com.schwab.urlshortener.api.error;
 
+import com.schwab.urlshortener.domain.exception.ShortUrlAlreadyActiveException;
+import com.schwab.urlshortener.domain.exception.ShortUrlAlreadyDeactivatedException;
+import com.schwab.urlshortener.domain.exception.ShortUrlDeletedException;
 import com.schwab.urlshortener.service.exception.AliasAlreadyExistsException;
 import com.schwab.urlshortener.service.exception.InvalidAliasException;
 import com.schwab.urlshortener.service.exception.InvalidUrlException;
 import com.schwab.urlshortener.service.exception.ShortCodeUnavailableException;
+import com.schwab.urlshortener.service.exception.ShortUrlConcurrentModificationException;
 import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
 import com.schwab.urlshortener.shortcode.SecureRandomShortCodeGenerator;
 import com.schwab.urlshortener.validation.UrlValidator;
@@ -59,6 +63,10 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         texts.put(ErrorCode.INVALID_ALIAS, "The alias is not acceptable.");
         texts.put(ErrorCode.ALIAS_ALREADY_EXISTS, "The alias is already in use.");
         texts.put(ErrorCode.SHORT_URL_NOT_FOUND, "The short URL was not found.");
+        texts.put(ErrorCode.SHORT_URL_ALREADY_DEACTIVATED, "The short URL is already deactivated.");
+        texts.put(ErrorCode.SHORT_URL_ALREADY_ACTIVE, "The short URL is already active.");
+        texts.put(ErrorCode.CONCURRENT_MODIFICATION,
+                "The short URL was changed by another request. Read it again and retry if still needed.");
         texts.put(ErrorCode.SHORT_CODE_UNAVAILABLE, "A short code could not be allocated. Retry later.");
         texts.put(ErrorCode.RESOURCE_NOT_FOUND, "The requested resource was not found.");
         texts.put(ErrorCode.METHOD_NOT_ALLOWED, "The request method is not supported for this resource.");
@@ -143,10 +151,32 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return respond(plain(ErrorCode.SHORT_CODE_UNAVAILABLE, request));
     }
 
-    /** D72, D13, D4, D74: malformed, unknown, deleted and not-yours all give this one body. The service logged. */
-    @ExceptionHandler(ShortUrlNotFoundException.class)
+    /**
+     * D72, D13, D4, D46, D74: malformed, unknown, deleted, not-yours and a transition on a deleted link all give this
+     * one body. The handler deliberately takes no exception parameter: the domain exception's message contains the
+     * code and must never reach the body. The service logged.
+     */
+    @ExceptionHandler({ShortUrlNotFoundException.class, ShortUrlDeletedException.class})
     ResponseEntity<ProblemDetail> handleShortUrlNotFound(HttpServletRequest request) {
         return respond(plain(ErrorCode.SHORT_URL_NOT_FOUND, request));
+    }
+
+    /** D26: a client outcome, so nothing is logged. */
+    @ExceptionHandler(ShortUrlAlreadyDeactivatedException.class)
+    ResponseEntity<ProblemDetail> handleAlreadyDeactivated(HttpServletRequest request) {
+        return respond(plain(ErrorCode.SHORT_URL_ALREADY_DEACTIVATED, request));
+    }
+
+    /** D26: a client outcome, so nothing is logged. */
+    @ExceptionHandler(ShortUrlAlreadyActiveException.class)
+    ResponseEntity<ProblemDetail> handleAlreadyActive(HttpServletRequest request) {
+        return respond(plain(ErrorCode.SHORT_URL_ALREADY_ACTIVE, request));
+    }
+
+    /** D35, D87: the service logged it at INFO. */
+    @ExceptionHandler(ShortUrlConcurrentModificationException.class)
+    ResponseEntity<ProblemDetail> handleConcurrentModification(HttpServletRequest request) {
+        return respond(plain(ErrorCode.CONCURRENT_MODIFICATION, request));
     }
 
     // ---- Catch-all

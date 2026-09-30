@@ -3,6 +3,7 @@ package com.schwab.urlshortener.validation;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -59,8 +60,8 @@ class LocationEncoderTest {
 
     @Test
     void shouldLeaveA2048CharacterAsciiUrlByteIdentical() {
-        String url = "https://example.com/" + "aB%2f".repeat(400) + "?q=1";
-        assertThat(url.length()).isLessThanOrEqualTo(2048);
+        String url = String.format(Locale.ROOT, "https://example.com/%s?q=1", "aB%2f".repeat(400) + "x".repeat(24));
+        assertThat(url).hasSize(2048);
 
         assertThat(LocationEncoder.encode(url)).isEqualTo(url);
     }

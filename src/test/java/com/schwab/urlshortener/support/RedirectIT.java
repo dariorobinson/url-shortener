@@ -240,15 +240,19 @@ class RedirectIT extends IntegrationTestBase {
 
     @Test
     void shouldLogTomcatHeadersTooLargeErrorWhenAnOversizedRowBypassesD84(CapturedOutput output) throws Exception {
-        // Positive control for the log assertion above: the same capture does see the Tomcat failure when a
-        // row that D84 would reject is seeded by raw SQL (about 18 KB of Location, over the 8 KB header buffer).
+        // Pins the D85 gap and is the positive control for the log assertion above: the same capture does see
+        // the Tomcat failure when a row that D84 would reject is seeded by raw SQL (about 18 KB of Location, over
+        // the 8 KB header buffer). Even then the URL itself is never logged.
         String oversized = EncodedUrls.PREFIX + EncodedUrls.CJK.repeat(2028);
         data.seed("Huge0001", "ACTIVE", oversized);
 
         HttpResponse<String> response = call("GET", "/Huge0001");
 
         assertThat(response.statusCode()).isEqualTo(500);
-        assertThat(output.getAll()).contains("HeadersTooLargeException");
+        assertThat(output.getAll()).contains("HeadersTooLargeException").doesNotContain(oversized)
+                .doesNotContain(LocationEncoder.encode(oversized))
+                .doesNotContain(EncodedUrls.CJK.repeat(3))
+                .doesNotContain("%E4%B8%AD".repeat(3));
     }
 
     @Test

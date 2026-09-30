@@ -8,13 +8,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.startsWith;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -26,6 +31,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.schwab.urlshortener.config.AppProperties;
 import com.schwab.urlshortener.domain.ShortUrlStatus;
+import com.schwab.urlshortener.domain.exception.ShortUrlAlreadyActiveException;
+import com.schwab.urlshortener.domain.exception.ShortUrlAlreadyDeactivatedException;
+import com.schwab.urlshortener.domain.exception.ShortUrlDeletedException;
 import com.schwab.urlshortener.security.SecuritySliceTestConfiguration;
 import com.schwab.urlshortener.service.Caller;
 import com.schwab.urlshortener.service.CreateShortUrlCommand;
@@ -35,6 +43,7 @@ import com.schwab.urlshortener.service.exception.AliasAlreadyExistsException;
 import com.schwab.urlshortener.service.exception.InvalidAliasException;
 import com.schwab.urlshortener.service.exception.InvalidUrlException;
 import com.schwab.urlshortener.service.exception.ShortCodeUnavailableException;
+import com.schwab.urlshortener.service.exception.ShortUrlConcurrentModificationException;
 import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
 import java.time.Instant;
 import java.util.List;
@@ -63,9 +72,10 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 /**
- * {@code POST /api/v1/urls} through the real filter chain and the real {@code GlobalExceptionHandler}, with
- * the service mocked. Covers AC1, AC2, AC4, AC5, AC8, AC10, AC12, AC14, AC16 and the D31, D56, D58, D59, D61
- * error contract. The filter-chain rule that admits the endpoint is rule 6 (D3).
+ * {@code POST}, {@code GET}, {@code PATCH} and {@code DELETE} on {@code /api/v1/urls} through the real filter
+ * chain and the real {@code GlobalExceptionHandler}, with the service mocked. Covers AC1, AC2, AC4, AC5, AC8, AC10, AC12, AC14, AC16 and the D31, D56, D58, D59, D61
+ * error contract; US-009 adds PATCH and DELETE (AC1 to AC10, AC12, D88, D89). POST, GET and PATCH are admitted by
+ * rule 6 and DELETE by rule 5 (D3).
  */
 @WebMvcTest(ShortUrlController.class)
 @Import({SecuritySliceTestConfiguration.class, ShortUrlLinks.class})
@@ -667,5 +677,438 @@ class ShortUrlControllerWebMvcTest {
                 .andReturn();
 
         assertThat(result.getResponse().getContentAsString()).doesNotContain("secret-marker");
+    }
+
+    // ---- US-009: PATCH /api/v1/urls/{code} (AC1, AC2, AC4, D34, D88, D89)
+
+    private static MockHttpServletRequestBuilder patchAs(String user, String password, String body) {
+        return patch(CODE_PATH).with(httpBasic(user, password)).contentType(MediaType.APPLICATION_JSON).content(body);
+    }
+
+    private static MockHttpServletRequestBuilder patchAsAlice(String body) {
+        return patchAs(ALICE, ALICE_PASSWORD, body);
+    }
+
+    private static ShortUrlView viewWithStatus(ShortUrlStatus status) {
+        return new ShortUrlView(CODE, "https://example.com/page", status, false, 7L, CREATED_AT, CREATED_AT);
+    }
+
+    @Test
+    void shouldReturn200WithTheExactEightFieldResourceAndDeactivatedStatusOnPatchFalse() throws Exception {
+        when(service.setActive(any(), anyBoolean(), any())).thenReturn(viewWithStatus(ShortUrlStatus.DEACTIVATED));
+
+        MvcResult result = mockMvc.perform(patchAsAlice("{\"active\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.status").value("DEACTIVATED"))
+                .andExpect(jsonPath("$.shortCode").value(CODE))
+                .andExpect(jsonPath("$.shortUrl").value("https://short.example/aB3dE9x"))
+                .andExpect(jsonPath("$.clickCount").value(7))
+                .andExpect(jsonPath("$.lastAccessedAt").value("2026-09-29T14:03:12.123456Z"))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(new TreeSet<>(RESOURCE_KEYS));
+        assertThat(result.getResponse().getContentAsString()).doesNotContain("createdBy").doesNotContain("updatedAt")
+                .doesNotContain("version").doesNotContain("alice");
+        ArgumentCaptor<Caller> caller = ArgumentCaptor.forClass(Caller.class);
+        verify(service).setActive(eq(CODE), eq(false), caller.capture());
+        assertThat(caller.getValue()).isEqualTo(new Caller("alice", false));
+    }
+
+    @Test
+    void shouldReturn200WithActiveStatusAndPassTrueOnPatchTrue() throws Exception {
+        when(service.setActive(any(), anyBoolean(), any())).thenReturn(viewWithStatus(ShortUrlStatus.ACTIVE));
+
+        mockMvc.perform(patchAsAlice("{\"active\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACTIVE"));
+
+        verify(service).setActive(eq(CODE), eq(true), eq(new Caller("alice", false)));
+    }
+
+    @Test
+    void shouldPassAnAdminCallerWithTheAdminFlagOnPatch() throws Exception {
+        when(service.setActive(any(), anyBoolean(), any())).thenReturn(viewWithStatus(ShortUrlStatus.DEACTIVATED));
+
+        mockMvc.perform(patchAs(ADMIN, ADMIN_PASSWORD, "{\"active\":false}")).andExpect(status().isOk());
+
+        verify(service).setActive(eq(CODE), eq(false), eq(new Caller("admin", true)));
+    }
+
+    @Test
+    void shouldStillSerializeResponseBooleansAsJsonBooleansSoD89DoesNotTouchResponses() throws Exception {
+        when(service.setActive(any(), anyBoolean(), any())).thenReturn(
+                new ShortUrlView(CODE, "https://example.com/page", ShortUrlStatus.ACTIVE, true, 0L, CREATED_AT, null));
+
+        String body = mockMvc.perform(patchAsAlice("{\"active\":true}")).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(body).contains("\"customAlias\":true");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"{}", "{\"active\":null}"})
+    void shouldReturn400ValidationFailedWithTheFieldForAMissingOrNullActive(String body) throws Exception {
+        MvcResult result = mockMvc.perform(patchAsAlice(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.errors.length()").value(1))
+                .andExpect(jsonPath("$.errors[0].field").value("active"))
+                .andExpect(jsonPath("$.errors[0].message").value("must not be null"))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(plus(BASE_KEYS, "errors"));
+        verifyNoInteractions(service);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "null", "[]", "{\"active\":", "{\"active\":\"maybe\"}", "{\"active\":{}}",
+            "{\"active\":[]}", "{\"active\":[true]}",
+            "{\"active\":false,\"x\":1}", "{\"expiresAt\":\"2030-01-01T00:00:00Z\"}",
+            "{\"active\":true,\"active\":false}"})
+    void shouldReturn400MalformedRequestWithoutParserDetailsForUnreadablePatchBodies(String body) throws Exception {
+        MvcResult result = mockMvc.perform(patchAsAlice(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errorCode").value("MALFORMED_REQUEST"))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(new TreeSet<>(BASE_KEYS));
+        assertThat(result.getResponse().getContentAsString()).doesNotContain("JSON").doesNotContain("parse")
+                .doesNotContain("com.fasterxml").doesNotContain("Exception").doesNotContain("expiresAt");
+        verifyNoInteractions(service);
+    }
+
+    // D89: only a real JSON boolean is accepted for active.
+    @ParameterizedTest
+    @ValueSource(strings = {"\"false\"", "\"true\"", "\"FALSE\"", "\"\"", "\" \"", "0", "1", "2", "-1", "1.0", "0.0",
+            "1.5"})
+    void shouldReturn400MalformedRequestForANonBooleanScalarActiveAndNeverCallTheService(String value)
+            throws Exception {
+        MvcResult result = mockMvc.perform(patchAsAlice("{\"active\":" + value + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("MALFORMED_REQUEST"))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(new TreeSet<>(BASE_KEYS));
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void shouldStillAcceptRealJsonBooleansSoTheStrictRowsAboveAreNotVacuous() throws Exception {
+        when(service.setActive(any(), anyBoolean(), any())).thenReturn(viewWithStatus(ShortUrlStatus.ACTIVE));
+
+        mockMvc.perform(patchAsAlice("{\"active\":true}")).andExpect(status().isOk());
+        mockMvc.perform(patchAsAlice("{\"active\":false}")).andExpect(status().isOk());
+
+        verify(service).setActive(CODE, true, new Caller("alice", false));
+        verify(service).setActive(CODE, false, new Caller("alice", false));
+    }
+
+    // D89 scope: create is unchanged. Numbers given for the string properties are still coerced, as before.
+    @Test
+    void shouldStillCoerceJsonNumbersForCreateStringPropertiesSoD89IsScopedToBooleans() throws Exception {
+        when(service.create(any())).thenReturn(view("12345", true));
+
+        mockMvc.perform(create("{\"originalUrl\":98765,\"alias\":12345}")).andExpect(status().isCreated());
+
+        ArgumentCaptor<CreateShortUrlCommand> command = ArgumentCaptor.forClass(CreateShortUrlCommand.class);
+        verify(service).create(command.capture());
+        assertThat(command.getValue().alias()).isEqualTo("12345");
+        assertThat(command.getValue().originalUrl()).isEqualTo("98765");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"text/plain", "application/merge-patch+json", "application/json-patch+json",
+            "application/xml"})
+    void shouldReturn415ForAnyPatchContentTypeOtherThanApplicationJson(String contentType) throws Exception {
+        MvcResult result = mockMvc.perform(patch(CODE_PATH).with(httpBasic(ALICE, ALICE_PASSWORD))
+                        .contentType(contentType).content("{\"active\":false}"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errorCode").value("UNSUPPORTED_MEDIA_TYPE"))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(new TreeSet<>(BASE_KEYS));
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void shouldReturn415WhenThePatchContentTypeIsMissing() throws Exception {
+        mockMvc.perform(patch(CODE_PATH).with(httpBasic(ALICE, ALICE_PASSWORD)).content("{\"active\":false}"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(jsonPath("$.errorCode").value("UNSUPPORTED_MEDIA_TYPE"));
+
+        verifyNoInteractions(service);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"application/xml", "text/plain", "application/problem+json"})
+    void shouldReturn406AndNotCallTheServiceForAnUnacceptablePatchAccept(String accept) throws Exception {
+        MvcResult result = mockMvc.perform(patchAsAlice("{\"active\":false}").header(HttpHeaders.ACCEPT, accept))
+                .andExpect(status().isNotAcceptable())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errorCode").value("NOT_ACCEPTABLE"))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(new TreeSet<>(BASE_KEYS));
+        verifyNoInteractions(service);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"application/json", "*/*"})
+    void shouldReturn200ForAnAcceptablePatchAcceptAsThePositiveControl(String accept) throws Exception {
+        when(service.setActive(any(), anyBoolean(), any())).thenReturn(viewWithStatus(ShortUrlStatus.DEACTIVATED));
+
+        mockMvc.perform(patchAsAlice("{\"active\":false}").header(HttpHeaders.ACCEPT, accept))
+                .andExpect(status().isOk());
+
+        verify(service).setActive(any(), anyBoolean(), any());
+    }
+
+    @Test
+    void shouldReturn406NotBadRequestForMalformedPatchJsonWithAnUnacceptableAccept() throws Exception {
+        mockMvc.perform(patchAsAlice("{not json").accept(MediaType.APPLICATION_XML))
+                .andExpect(status().isNotAcceptable())
+                .andExpect(jsonPath("$.errorCode").value("NOT_ACCEPTABLE"));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void shouldReturn401WithAuthenticationRequiredAndNotCallTheServiceWhenAnonymousOnPatch() throws Exception {
+        MvcResult result = mockMvc.perform(patch(CODE_PATH).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"active\":false}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, startsWith("Basic")))
+                .andExpect(jsonPath("$.errorCode").value("AUTHENTICATION_REQUIRED"))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(new TreeSet<>(BASE_KEYS));
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void shouldReturn404ResourceNotFoundForATrailingSlashOnPatchAndNotCallTheService() throws Exception {
+        mockMvc.perform(patch(CODE_PATH + "/").with(httpBasic(ALICE, ALICE_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"active\":false}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("RESOURCE_NOT_FOUND"));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void shouldReturn405WithAllowListingGetPatchAndDeleteForPutOnTheCodePath() throws Exception {
+        mockMvc.perform(put(CODE_PATH).with(httpBasic(ALICE, ALICE_PASSWORD)))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(header().string(HttpHeaders.ALLOW, containsString("GET")))
+                .andExpect(header().string(HttpHeaders.ALLOW, containsString("PATCH")))
+                .andExpect(header().string(HttpHeaders.ALLOW, containsString("DELETE")))
+                .andExpect(jsonPath("$.errorCode").value("METHOD_NOT_ALLOWED"));
+
+        verifyNoInteractions(service);
+    }
+
+    // ---- US-009: service exceptions on PATCH (AC3, AC7, AC8, AC9, AC10, AC11)
+
+    @Test
+    void shouldReturn404ShortUrlNotFoundWithTheBaseKeysWhenThePatchTargetIsNotVisible() throws Exception {
+        when(service.setActive(any(), anyBoolean(), any())).thenThrow(new ShortUrlNotFoundException());
+
+        MvcResult result = mockMvc.perform(patchAsAlice("{\"active\":false}"))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errorCode").value("SHORT_URL_NOT_FOUND"))
+                .andExpect(jsonPath("$.instance").value(CODE_PATH))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(new TreeSet<>(BASE_KEYS));
+        verify(service).setActive(CODE, false, new Caller("alice", false));
+    }
+
+    @Test
+    void shouldReturnAByteIdentical404WhenTheServiceThrowsShortUrlDeletedInsteadOfNotFound() throws Exception {
+        when(service.setActive(any(), anyBoolean(), any())).thenThrow(new ShortUrlNotFoundException());
+        MvcResult notFound = mockMvc.perform(patchAsAlice("{\"active\":false}")).andReturn();
+        doThrow(new ShortUrlDeletedException(CODE)).when(service).setActive(any(), anyBoolean(), any());
+        MvcResult deleted = mockMvc.perform(patchAsAlice("{\"active\":false}")).andReturn();
+
+        assertThat(notFound.getResponse().getStatus()).isEqualTo(404);
+        assertThat(deleted.getResponse().getStatus()).isEqualTo(404);
+        assertThat(deleted.getResponse().getContentAsString()).isEqualTo(notFound.getResponse().getContentAsString());
+        assertThat(deleted.getResponse().getContentAsString()).contains("SHORT_URL_NOT_FOUND")
+                .doesNotContain("is deleted");
+        assertThat(deleted.getResponse().getContentType()).isEqualTo(notFound.getResponse().getContentType());
+    }
+
+    @Test
+    void shouldReturn409AlreadyDeactivatedWithExactlyTheBaseKeys() throws Exception {
+        when(service.setActive(any(), anyBoolean(), any())).thenThrow(new ShortUrlAlreadyDeactivatedException(CODE));
+
+        MvcResult result = mockMvc.perform(patchAsAlice("{\"active\":false}"))
+                .andExpect(status().isConflict())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errorCode").value("SHORT_URL_ALREADY_DEACTIVATED"))
+                .andExpect(jsonPath("$.instance").value(CODE_PATH))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(new TreeSet<>(BASE_KEYS));
+        assertThat(result.getResponse().getContentAsString()).doesNotContain(CODE + " ");
+    }
+
+    @Test
+    void shouldReturn409AlreadyActiveWithExactlyTheBaseKeys() throws Exception {
+        when(service.setActive(any(), anyBoolean(), any())).thenThrow(new ShortUrlAlreadyActiveException(CODE));
+
+        MvcResult result = mockMvc.perform(patchAsAlice("{\"active\":true}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("SHORT_URL_ALREADY_ACTIVE"))
+                .andExpect(jsonPath("$.instance").value(CODE_PATH))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(new TreeSet<>(BASE_KEYS));
+    }
+
+    @Test
+    void shouldReturn409ConcurrentModificationWithExactlyTheBaseKeysOnPatch() throws Exception {
+        when(service.setActive(any(), anyBoolean(), any()))
+                .thenThrow(new ShortUrlConcurrentModificationException(new RuntimeException("internal-marker")));
+
+        MvcResult result = mockMvc.perform(patchAsAlice("{\"active\":false}"))
+                .andExpect(status().isConflict())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errorCode").value("CONCURRENT_MODIFICATION"))
+                .andExpect(jsonPath("$.instance").value(CODE_PATH))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(new TreeSet<>(BASE_KEYS));
+        assertThat(result.getResponse().getContentAsString()).doesNotContain("internal-marker")
+                .doesNotContain("modified concurrently");
+    }
+
+    // ---- US-009: DELETE /api/v1/urls/{code} (AC5, AC6, AC7, AC8, AC12, D3)
+
+    private static MockHttpServletRequestBuilder deleteAsAdmin() {
+        return delete(CODE_PATH).with(httpBasic(ADMIN, ADMIN_PASSWORD));
+    }
+
+    @Test
+    void shouldReturn204WithAnEmptyBodyAndNoContentTypeWhenAdminDeletes() throws Exception {
+        MvcResult result = mockMvc.perform(deleteAsAdmin())
+                .andExpect(status().isNoContent())
+                .andExpect(header().doesNotExist(HttpHeaders.CONTENT_TYPE))
+                .andReturn();
+
+        assertThat(result.getResponse().getContentAsByteArray()).isEmpty();
+        verify(service).delete(CODE, new Caller("admin", true));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"aB3dE9x", "Missing1", "Deleted1", "Deact123", "bad-code", "ab"})
+    void shouldReturn403AccessDeniedForAUserOnAnyCodeAndNeverCallTheService(String code) throws Exception {
+        // A mocked service that would answer 404 for these codes: the 403 must come first (AC8).
+        doThrow(new ShortUrlNotFoundException()).when(service).delete(any(), any());
+
+        MvcResult result = mockMvc.perform(delete(PATH + "/" + code).with(httpBasic(ALICE, ALICE_PASSWORD)))
+                .andExpect(status().isForbidden())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE))
+                .andExpect(jsonPath("$.errorCode").value("ACCESS_DENIED"))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(new TreeSet<>(BASE_KEYS));
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void shouldReachTheServiceForAdminOnTheSameCodeThatGaveAUserA403AsThePositiveControl() throws Exception {
+        doThrow(new ShortUrlNotFoundException()).when(service).delete(any(), any());
+
+        mockMvc.perform(delete(CODE_PATH).with(httpBasic(ALICE, ALICE_PASSWORD))).andExpect(status().isForbidden());
+        mockMvc.perform(deleteAsAdmin())
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("SHORT_URL_NOT_FOUND"));
+
+        verify(service, times(1)).delete(any(), any());
+    }
+
+    @Test
+    void shouldReturn404ShortUrlNotFoundForAdminWhenTheServiceThrowsDeletedOrNotFound() throws Exception {
+        doThrow(new ShortUrlNotFoundException()).when(service).delete(any(), any());
+        MvcResult notFound = mockMvc.perform(deleteAsAdmin()).andReturn();
+        doThrow(new ShortUrlDeletedException(CODE)).when(service).delete(any(), any());
+        MvcResult deleted = mockMvc.perform(deleteAsAdmin()).andReturn();
+
+        assertThat(notFound.getResponse().getStatus()).isEqualTo(404);
+        assertThat(deleted.getResponse().getContentAsString()).isEqualTo(notFound.getResponse().getContentAsString());
+        assertThat(notFound.getResponse().getContentAsString()).contains("\"errorCode\":\"SHORT_URL_NOT_FOUND\"");
+    }
+
+    @Test
+    void shouldReturn409ConcurrentModificationWhenTheServiceReportsAConflictOnDelete() throws Exception {
+        doThrow(new ShortUrlConcurrentModificationException(new RuntimeException()))
+                .when(service).delete(any(), any());
+
+        MvcResult result = mockMvc.perform(deleteAsAdmin())
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("CONCURRENT_MODIFICATION"))
+                .andExpect(jsonPath("$.instance").value(CODE_PATH))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(new TreeSet<>(BASE_KEYS));
+    }
+
+    @Test
+    void shouldReturn401AndNotCallTheServiceWhenAnonymousOnDelete() throws Exception {
+        MvcResult result = mockMvc.perform(delete(CODE_PATH))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, startsWith("Basic")))
+                .andExpect(jsonPath("$.errorCode").value("AUTHENTICATION_REQUIRED"))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(new TreeSet<>(BASE_KEYS));
+        verifyNoInteractions(service);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"application/xml", "text/plain", "application/problem+json"})
+    void shouldReturn406AndNotCallTheServiceForAnUnacceptableDeleteAcceptFromAdmin(String accept) throws Exception {
+        MvcResult result = mockMvc.perform(deleteAsAdmin().header(HttpHeaders.ACCEPT, accept))
+                .andExpect(status().isNotAcceptable())
+                .andExpect(jsonPath("$.errorCode").value("NOT_ACCEPTABLE"))
+                .andReturn();
+
+        assertThat(keys(result)).isEqualTo(new TreeSet<>(BASE_KEYS));
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void shouldReturn204ForAnAcceptableDeleteAcceptAsThePositiveControl() throws Exception {
+        mockMvc.perform(deleteAsAdmin().header(HttpHeaders.ACCEPT, "application/json"))
+                .andExpect(status().isNoContent());
+
+        verify(service).delete(CODE, new Caller("admin", true));
+    }
+
+    @Test
+    void shouldReturn403NotNotAcceptableForAUserDeleteWithAnUnacceptableAcceptBecauseSecurityComesFirst()
+            throws Exception {
+        mockMvc.perform(delete(CODE_PATH).with(httpBasic(ALICE, ALICE_PASSWORD))
+                        .header(HttpHeaders.ACCEPT, "application/xml"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.errorCode").value("ACCESS_DENIED"));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void shouldReturn404ResourceNotFoundForATrailingSlashOnDeleteAndNotCallTheService() throws Exception {
+        mockMvc.perform(delete(CODE_PATH + "/").with(httpBasic(ADMIN, ADMIN_PASSWORD)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("RESOURCE_NOT_FOUND"));
+
+        verifyNoInteractions(service);
     }
 }

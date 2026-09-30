@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-09-29 (US-006 implemented; content negotiation per D70; US-007 implemented; US-008 implemented). Each section is marked *planned*, *designed (US-nnn)*, or *implemented (US-nnn)* as work progresses.
+Last updated: 2026-09-30 (US-006 implemented; content negotiation per D70; US-007 implemented; US-008 implemented; US-009 implemented). Each section is marked *planned*, *designed (US-nnn)*, or *implemented (US-nnn)* as work progresses.
 
 ## Overview
 
@@ -145,14 +145,16 @@ com.schwab.urlshortener
 │                      #   ProblemDetailAuthenticationEntryPoint/AccessDeniedHandler/ResponseWriter
 ├── api/               # ShortUrlController, ShortUrlLinks (shortUrl/Location from APP_BASE_URL) (US-006);
 │                      #   RedirectController (GET/HEAD /{code}, never `produces`) (implemented (US-008))
-│   ├── dto/           # CreateShortUrlRequest, ShortUrlResponse (shared with US-007) (US-006)
+│   ├── dto/           # CreateShortUrlRequest, ShortUrlResponse (shared with US-007) (US-006);
+│   │                  #   UpdateShortUrlRequest (PATCH body) (implemented (US-009))
 │   └── error/         # ErrorCode, ProblemDetails (implemented (US-005));
 │                      #   GlobalExceptionHandler, FieldViolation, ErrorResponseSchema (docs only) (US-006)
 ├── service/           # ShortUrlService, CreateShortUrlCommand, ShortUrlView (US-006);
 │   │                  #   Caller(username, admin) (implemented (US-007));
 │   │                  #   RedirectService (public resolution, read-only template) (implemented (US-008))
 │   └── exception/     # InvalidUrl/InvalidAlias/AliasAlreadyExists/ShortCodeUnavailable exceptions (US-006);
-│                      #   ShortUrlNotFoundException (implemented (US-007))
+│                      #   ShortUrlNotFoundException (implemented (US-007));
+│                      #   ShortUrlConcurrentModificationException (implemented (US-009))
 ├── domain/            # ShortUrl entity, ShortUrlStatus
 │   └── exception/     # ShortUrlAlreadyDeactivated/AlreadyActive/Deleted exceptions
 ├── shortcode/         # ShortCodeGenerator + implementation; ShortCodeFormat (D6 format check, shared by
@@ -236,7 +238,7 @@ The full detail is in the US-002 Design note.
 | `DEACTIVATED` | `ShortUrlAlreadyDeactivatedException` → 409 `SHORT_URL_ALREADY_DEACTIVATED` | → `ACTIVE` | → `DELETED` |
 | `DELETED` | `ShortUrlDeletedException` → 404 `SHORT_URL_NOT_FOUND` | same | same (D46) |
 
-HTTP mappings are implemented in US-009.
+HTTP mappings: *implemented (US-009)* (see *Lifecycle* under REST API). `ShortUrlDeletedException` is unreachable through `loadVisible`, which hides `DELETED` rows first, but the advice still maps it to the identical 404 (D46).
 
 **`ShortUrlRepository`** (`repository`): `JpaRepository<ShortUrl, Long>` plus `findByShortCode` (case-sensitive, no status filtering). Integrity under concurrency comes from `uk_short_url_short_code`, `@Version`, and the D27 mapping, not from application pre-checks.
 
@@ -247,8 +249,8 @@ HTTP mappings are implemented in US-009.
 | GET, HEAD | `/{code}` | Public (rule 7) | 302 + `Location` + `Cache-Control: no-store` | 404 (unknown / deleted / deactivated / malformed); 401 only for invalid Basic credentials (D55) |
 | POST | `/api/v1/urls` | USER, ADMIN | 201 + `Location` | 400, 401, 406, 409, 415, 503 |
 | GET | `/api/v1/urls/{code}` | Owner, ADMIN | 200 | 401, 404, 406 |
-| PATCH | `/api/v1/urls/{code}` | Owner, ADMIN | 200 | 400, 401, 404, 409 |
-| DELETE | `/api/v1/urls/{code}` | ADMIN | 204 | 401, 403, 404 |
+| PATCH | `/api/v1/urls/{code}` | Owner, ADMIN | 200 | 400, 401, 404, 406, 409, 415 (implemented (US-009)) |
+| DELETE | `/api/v1/urls/{code}` | ADMIN | 204 | 401, 403, 404, 406, 409 (implemented (US-009)) |
 | GET | `/api/v1/urls/{code}/stats?from&to&timezone` | Owner, ADMIN | 200 | 400, 401, 404 |
 
 **Content negotiation rule (D70):** management API mappings declare `produces = application/json` (class-level on `ShortUrlController`, never `application/problem+json`); the redirect never does. Every `/api/v1/urls` operation therefore also returns 406 for an `Accept` that excludes `application/json`, DELETE included. The 406 is decided at mapping lookup, before the body is read or the service runs, so a rejected request never creates or changes anything. Precedence and the unparseable-`Accept` deviation are under *Error handling*.
@@ -311,6 +313,36 @@ The full detail is in the US-008 Design note.
 - **US-010 seam:** one handler and one response builder. The read transaction has closed before `resolve` returns. US-010 adds an `HttpMethod` parameter, records clicks for GET only after a successful resolution, and fails open (D9, D12). US-008 adds no `ClickRecorder`.
 - **Logging:** DEBUG only, with the well-formed code and a reason (`NOT_FOUND`, `DEACTIVATED`, `DELETED`, `MALFORMED` without the value). Never the target URL or host.
 
+### Lifecycle: deactivate, reactivate, soft delete — *implemented (US-009)*
+
+The full detail is in the US-009 Design note. There is no migration, and `SecurityConfig` is unchanged.
+
+- **PATCH `/api/v1/urls/{code}`** (D34):
+  - Admitted by rule 6.
+  - `consumes = application/json`, so other types get 415. Class-level `produces` is inherited (D70).
+  - Body `UpdateShortUrlRequest(@NotNull Boolean active)`: missing or `null` gives `VALIDATION_FAILED` with `errors`, and unknown fields give `MALFORMED_REQUEST` (D59).
+  - 200 with the D58 `ShortUrlResponse`.
+  - A redundant change gets the D26 409s. Deleted, unknown, malformed and not-yours codes get the one 404 (D4, D13, D72, D74).
+- **DELETE `/api/v1/urls/{code}`** (D1, D3, D36, D46):
+  - Rule 5 gives a USER 403 before any handler.
+  - 204 with no body.
+  - `softDelete(username, clock)`, where `deleted_by` is the configured admin username (D51).
+  - Deleting a DEACTIVATED link is allowed; a DELETED or unknown code gets 404.
+  - The code is never reused: a create with it gets `409 ALIAS_ALREADY_EXISTS`.
+- **Service:** `ShortUrlService.setActive(code, active, caller)` and `delete(code, caller)`. `delete` first checks `caller.admin()` as a guard behind rule 5, throwing `IllegalStateException`. Both reuse `loadVisible` unchanged, then call the entity transition. `updated_at`/`deleted_at` come from the injected `Clock` (D45).
+- **Transactions:**
+  - A third constructor-built `TransactionTemplate`, `readWrite` (REQUIRED, read-write, READ COMMITTED). There is no `@Transactional`.
+  - An explicit `repository.flush()` inside the callback runs the versioned `UPDATE … WHERE id = ? AND version = ?` before commit. That avoids Hibernate's managed-flush ERROR log (`HHH000346`).
+  - Spring's `OptimisticLockingFailureException` (flush-time or commit-time) is caught **outside** the template, after rollback, and rethrown as `ShortUrlConcurrentModificationException`, which gives `409 CONCURRENT_MODIFICATION` (D35).
+- **Concurrency:**
+  - Two concurrent deactivations give one 200 and one 409. The loser gets `CONCURRENT_MODIFICATION` if both read the same version, or `SHORT_URL_ALREADY_DEACTIVATED` if they serialised. Clients must handle both (D86). DELETE can also return `409 CONCURRENT_MODIFICATION`, and a PATCH that loses to a DELETE gets 409; a re-read then gives 404 (D87).
+  - DELETE racing with PATCH, or with another DELETE, can also give `409 CONCURRENT_MODIFICATION`.
+  - A click (US-010's atomic UPDATE, which never touches `version`) never causes a 409. The entity UPDATE never writes `click_count`/`last_accessed_at` (D16, D27).
+- **Logging:** INFO after commit with the code (deactivated, reactivated, deleted), and INFO for a conflict with the code and action. Never usernames (including `deleted_by`) or URLs.
+
+- **Request parsing (D88, D89, D90):** PATCH accepts `application/json` only (other types get 415). `active` must be a real JSON boolean: `"false"`, `0` and `1` get `400 MALFORMED_REQUEST`, and a missing or null value gets `400 VALIDATION_FAILED`. Jackson's scalar coercion is disabled for the Boolean type only, through `config/JacksonConfig`, which every web slice imports via the shared slice configuration. Click data in the PATCH 200 is as read inside that transaction (D90).
+- **405 `Allow`:** a 405 on `/api/v1/urls/{code}` lists `GET, DELETE, PATCH`. Spring leaves out the implicit HEAD, although HEAD is served.
+
 ### Access rules in the filter chain — *implemented (US-005)*
 
 The rules below are evaluated top to bottom, and the first match wins. The exact configuration is in the US-005 Design note §3.
@@ -321,8 +353,8 @@ The rules below are evaluated top to bottom, and the first match wins. The exact
 | 2 | `GET /actuator/health` | public |
 | 3 | `GET /v3/api-docs`, `/v3/api-docs/**`, `/v3/api-docs.yaml`, `/swagger-ui.html`, `/swagger-ui/**` | public (springdoc 2.8.17 defaults) |
 | 4 | `/actuator`, `/actuator/**` | authenticated (keeps `/actuator` from matching rule 7) |
-| 5 | `DELETE /api/v1/urls/**` | `hasRole(ADMIN)` (D3). It covers trailing-slash and nested variants. 403 is returned before any handler or lookup (US-009 AC6, AC8) |
-| 6 | `/api`, `/api/**` | `hasRole(USER)`; ADMIN passes through the `ADMIN > USER` hierarchy. Ownership (D4) is enforced in the service. It admits `POST /api/v1/urls` (US-006) and `GET`/`HEAD /api/v1/urls/{code}` (implemented (US-007)) |
+| 5 | `DELETE /api/v1/urls/**` | `hasRole(ADMIN)` (D3). It covers trailing-slash and nested variants. 403 is returned before any handler or lookup (US-009 AC6, AC8). Admits the ADMIN soft delete (implemented (US-009)) |
+| 6 | `/api`, `/api/**` | `hasRole(USER)`; ADMIN passes through the `ADMIN > USER` hierarchy. Ownership (D4) is enforced in the service. It admits `POST /api/v1/urls` (US-006) and `GET`/`HEAD /api/v1/urls/{code}` (implemented (US-007)), and `PATCH /api/v1/urls/{code}` (implemented (US-009)) |
 | 7 | `GET` and `HEAD /*` (any single segment) | public (D32). Not narrowed to the code regex: US-008 AC6 requires 404, not 401, for malformed codes. Admits the redirect `GET`/`HEAD /{code}` (implemented (US-008)). A trailing-slash variant `/{code}/` falls to rule 8 |
 | 8 | anything else | **`denyAll`** (D57): anonymous gets 401 through the entry point, authenticated gets 403 `ACCESS_DENIED`. Only explicitly listed paths can reach a handler, so case or path variants of a restricted prefix (for example `/API/...`) never fall through to a weaker rule |
 
@@ -406,7 +438,13 @@ RFC 7807 `ProblemDetail` responses with an `errorCode` extension, produced by a 
 - *Implemented (US-007):*
   - `ShortUrlNotFoundException` → 404 `SHORT_URL_NOT_FOUND` ("The short URL was not found."), base keys only.
   - It is distinct from `RESOURCE_NOT_FOUND`, which is used for unmapped paths such as `/api/v1/urls/{code}/`. Tests of the details endpoint must therefore assert the `errorCode`, never only the 404.
-  - US-009 maps `ShortUrlDeletedException` to the same body (D46).
+  - US-009 maps `ShortUrlDeletedException` to the same body (D46). *Implemented (US-009):* the exception is added to the **existing** handler's `@ExceptionHandler` list, so the body is byte-identical by construction.
+- *Implemented (US-009):*
+  - `ShortUrlAlreadyDeactivatedException` → 409 `SHORT_URL_ALREADY_DEACTIVATED`
+  - `ShortUrlAlreadyActiveException` → 409 `SHORT_URL_ALREADY_ACTIVE`
+  - `ShortUrlConcurrentModificationException` → 409 `CONCURRENT_MODIFICATION`
+
+  All three carry the base keys only, with fixed `detail` texts, and nothing is logged by the advice. The advice has no handler for Spring's `OptimisticLockingFailureException`: the service translates it, as create translates `DataIntegrityViolationException`.
   - *Implemented (US-008):* the redirect throws the same exception for malformed, unknown, `DEACTIVATED` (D2) and `DELETED` codes. The handler is unchanged.
 - **Field-level extension (D56):** `errors`, an array of `{field, message}` sorted by field, used only on `VALIDATION_FAILED`, `INVALID_URL` and `INVALID_ALIAS`. It never contains the rejected value.
 - **Shape parity:** advice bodies are serialized by Spring MVC with the context `ObjectMapper`, the same one the security writer uses. So `errorCode` is top-level on both paths, and 401/403 carry the base keys only.
@@ -434,4 +472,7 @@ RFC 7807 `ProblemDetail` responses with an `errorCode` extension, produced by a 
   - `404` as `application/problem+json` with the `Problem` schema.
 
   HEAD is described in the text, not listed as an operation.
+- *Implemented (US-009):*
+  - `PATCH /api/v1/urls/{code}` documents a request body (`application/json`, `UpdateShortUrlRequest`, `active` required), `200` (`application/json`), and `400`, `401`, `404`, `406`, `409` and `415` (problem+json).
+  - `DELETE /api/v1/urls/{code}` documents exactly `204` (no content), `401`, `403`, `404`, `406` and `409`.
 - `/v3/api-docs` stays at springdoc's default path and stays public (access-table rule 3).

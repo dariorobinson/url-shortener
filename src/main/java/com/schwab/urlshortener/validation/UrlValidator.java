@@ -44,6 +44,9 @@ public class UrlValidator {
      *         bytes (D84); false otherwise, including for null. Never throws for bad input.
      */
     public boolean isValid(String url) {
+        // D84 implies the D11 count: every code point becomes at least one character of the encoded form, so a
+        // form within MAX_ENCODED_BYTES already bounds the code-point count. The D11 check stays as the cheap
+        // limit that runs before the encoding allocates anything.
         if (url == null || url.codePointCount(0, url.length()) > MAX_LENGTH) {
             return false;
         }

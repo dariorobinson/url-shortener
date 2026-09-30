@@ -7,8 +7,13 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.schwab.urlshortener.domain.exception.ShortUrlDeletedException;
+import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -20,6 +25,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
 
@@ -102,7 +108,8 @@ class GlobalExceptionHandlerTest {
             assertThat(event.getLevel()).isEqualTo(Level.ERROR);
             assertThat(event.getFormattedMessage())
                     .isEqualTo("Unhandled exception: method=GET path=/api/v1/urls");
-            assertThat(event.getThrowableProxy().getClassName()).isEqualTo(AsyncRequestTimeoutException.class.getName());
+            assertThat(event.getThrowableProxy().getClassName())
+                    .isEqualTo(AsyncRequestTimeoutException.class.getName());
         } finally {
             logger.detachAppender(logs);
         }
@@ -131,5 +138,73 @@ class GlobalExceptionHandlerTest {
 
         ProblemDetail body = (ProblemDetail) response.getBody();
         assertThat(body.getInstance().toString()).isEqualTo("/api/v1/urls");
+    }
+
+    private enum Lifecycle {
+        DELETED(HttpStatus.NOT_FOUND, "SHORT_URL_NOT_FOUND", "The short URL was not found."),
+        ALREADY_DEACTIVATED(HttpStatus.CONFLICT, "SHORT_URL_ALREADY_DEACTIVATED",
+                "The short URL is already deactivated."),
+        ALREADY_ACTIVE(HttpStatus.CONFLICT, "SHORT_URL_ALREADY_ACTIVE", "The short URL is already active."),
+        CONCURRENT(HttpStatus.CONFLICT, "CONCURRENT_MODIFICATION",
+                "The short URL was changed by another request. Read it again and retry if still needed.");
+
+        final HttpStatus status;
+        final String errorCode;
+        final String detail;
+
+        Lifecycle(HttpStatus status, String errorCode, String detail) {
+            this.status = status;
+            this.errorCode = errorCode;
+            this.detail = detail;
+        }
+
+        ResponseEntity<ProblemDetail> handle(GlobalExceptionHandler handler, MockHttpServletRequest request) {
+            return switch (this) {
+                case DELETED -> handler.handleShortUrlNotFound(request);
+                case ALREADY_DEACTIVATED -> handler.handleAlreadyDeactivated(request);
+                case ALREADY_ACTIVE -> handler.handleAlreadyActive(request);
+                case CONCURRENT -> handler.handleConcurrentModification(request);
+            };
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(Lifecycle.class)
+    void shouldMapEachLifecycleOutcomeToExactlyTheBaseKeysAndLogNothingAtWarnOrError(Lifecycle outcome) {
+        MockHttpServletRequest patch = new MockHttpServletRequest("PATCH", "/api/v1/urls/aB3dE9x");
+        Logger logger = (Logger) LoggerFactory.getLogger(GlobalExceptionHandler.class);
+        ListAppender<ILoggingEvent> logs = new ListAppender<>();
+        logs.start();
+        logger.addAppender(logs);
+        try {
+            ResponseEntity<ProblemDetail> response = outcome.handle(handler, patch);
+
+            assertThat(response.getStatusCode()).isEqualTo(outcome.status);
+            ProblemDetail body = response.getBody();
+            assertThat(body.getProperties()).containsOnlyKeys("errorCode");
+            assertThat(body.getProperties()).containsEntry("errorCode", outcome.errorCode);
+            assertThat(body.getDetail()).isEqualTo(outcome.detail);
+            assertThat(body.getStatus()).isEqualTo(outcome.status.value());
+            assertThat(body.getInstance().toString()).isEqualTo("/api/v1/urls/aB3dE9x");
+            assertThat(body.getType().toString()).isEqualTo("about:blank");
+            assertThat(logs.list).isEmpty();
+        } finally {
+            logger.detachAppender(logs);
+        }
+    }
+
+    @Test
+    void shouldGiveShortUrlDeletedTheSameHandlerAndTheSameBodyAsNotFoundWithoutReadingTheException()
+            throws Exception {
+        var handlerMethod = GlobalExceptionHandler.class.getDeclaredMethod("handleShortUrlNotFound",
+                HttpServletRequest.class);
+        var mapped = handlerMethod.getAnnotation(ExceptionHandler.class);
+
+        // One method serves both exceptions, and it takes only the request, so the exception's message (which
+        // contains the code) cannot reach the body (D74).
+        assertThat(mapped.value()).containsExactlyInAnyOrder(
+                ShortUrlNotFoundException.class,
+                ShortUrlDeletedException.class);
+        assertThat(handlerMethod.getParameterCount()).isEqualTo(1);
     }
 }
