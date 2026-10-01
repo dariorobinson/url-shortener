@@ -1,6 +1,6 @@
 package com.schwab.urlshortener.config;
 
-import com.schwab.urlshortener.validation.HttpUris;
+import com.schwab.urlshortener.util.validation.HttpUris;
 import jakarta.validation.Constraint;
 import jakarta.validation.ConstraintValidator;
 import jakarta.validation.ConstraintValidatorContext;

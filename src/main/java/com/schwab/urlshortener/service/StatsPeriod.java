@@ -1,8 +1,8 @@
 package com.schwab.urlshortener.service;
 
 import com.schwab.urlshortener.repository.ClickEventRepository.DayCount;
-import com.schwab.urlshortener.service.exception.InvalidStatsQueryException;
 import com.schwab.urlshortener.service.exception.InvalidStatsQueryException.Violation;
+import com.schwab.urlshortener.service.exception.InvalidStatsQueryException;
 import com.schwab.urlshortener.service.exception.StatsParameter;
 import java.time.DateTimeException;
 import java.time.Instant;

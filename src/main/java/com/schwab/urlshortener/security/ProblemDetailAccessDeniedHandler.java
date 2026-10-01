@@ -1,7 +1,7 @@
 package com.schwab.urlshortener.security;
 
-import com.schwab.urlshortener.api.error.ErrorCode;
-import com.schwab.urlshortener.api.error.ProblemDetails;
+import com.schwab.urlshortener.controller.error.ErrorCode;
+import com.schwab.urlshortener.controller.error.ProblemDetails;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;

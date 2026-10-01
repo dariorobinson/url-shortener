@@ -1,0 +1,361 @@
+package com.schwab.urlshortener.controller;
+
+import com.schwab.urlshortener.config.OpenApiConfig;
+import com.schwab.urlshortener.controller.dto.CreateShortUrlRequest;
+import com.schwab.urlshortener.controller.dto.ShortUrlResponse;
+import com.schwab.urlshortener.controller.dto.ShortUrlStatsResponse;
+import com.schwab.urlshortener.controller.dto.UpdateShortUrlRequest;
+import com.schwab.urlshortener.controller.error.ErrorResponseSchema;
+import com.schwab.urlshortener.security.Role;
+import com.schwab.urlshortener.service.Caller;
+import com.schwab.urlshortener.service.CreateShortUrlCommand;
+import com.schwab.urlshortener.service.ShortUrlService;
+import com.schwab.urlshortener.service.ShortUrlView;
+import com.schwab.urlshortener.service.UpdateShortUrlCommand;
+import com.schwab.urlshortener.service.exception.InvalidUpdateRequestException;
+import com.schwab.urlshortener.service.exception.StatsParameter;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
+import io.swagger.v3.oas.annotations.headers.Header;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.util.Arrays;
+import java.util.Set;
+import java.util.stream.Collectors;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.util.MultiValueMap;
+import org.springframework.web.bind.ServletRequestBindingException;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * Short URL management API. {@code POST /api/v1/urls}, {@code GET /api/v1/urls/{code}},
+ * {@code PATCH /api/v1/urls/{code}} and {@code GET /api/v1/urls/{code}/stats} are admitted by the filter-chain rule
+ * {@code /api, /api/** -> hasRole(USER)} (rule 6 in the architecture access table; ADMIN passes through the role
+ * hierarchy, D3).
+ * {@code DELETE /api/v1/urls/**} is admitted by rule 5, {@code hasRole(ADMIN)}, which comes first: a USER gets 403
+ * before any handler runs, whatever the code (D3). Anonymous callers get 401 from the entry point (D30).
+ *
+ * <p>Never annotate this class or its methods with {@code @Transactional}: the service owns its transactions
+ * (one {@code REQUIRES_NEW} per insert attempt, a read-only template for reads, a read-write template for
+ * PATCH and DELETE). Ownership rules (D4, D13) live
+ * only in the service; the controller merely tells it who is calling.
+ *
+ * <p>The class-level {@code produces = application/json} (D70) makes an unacceptable {@code Accept} header fail
+ * with 406 at mapping lookup, before the body is read or the service runs, so nothing is created. It must stay
+ * exactly {@code application/json}: adding {@code application/problem+json} would let that header match and
+ * label a 201 body as a problem document. It must never appear on the redirect controller. The advice still
+ * writes errors as {@code application/problem+json}, because {@code produces} does not restrict its output.
+ */
+@RestController
+// D70: 406 at mapping lookup for an unacceptable Accept, before anything is created. application/json only.
+@RequestMapping(path = ShortUrlController.BASE_PATH, produces = MediaType.APPLICATION_JSON_VALUE)
+@RequiredArgsConstructor
+@Tag(name = "Short URLs")
+@SecurityRequirement(name = OpenApiConfig.BASIC_AUTH)
+class ShortUrlController {
+
+    static final String BASE_PATH = "/api/v1/urls";
+
+    /** D100: the only query parameter names the stats endpoint accepts, each at most once. */
+    static final Set<String> STATS_PARAMETERS = Arrays.stream(StatsParameter.values())
+            .map(StatsParameter::wireName).collect(Collectors.toUnmodifiableSet());
+
+    private final ShortUrlService service;
+    private final ShortUrlLinks links;
+
+    @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Create a short URL",
+            description = """
+                    Creates a short code for originalUrl. originalUrl must be an absolute http or https URL of at \
+                    most 2048 characters, without embedded credentials, and not on this service's own host. \
+                    Non-ASCII (IDN) hosts are rejected with 400 INVALID_URL: clients must submit the punycode \
+                    (xn--) form. An optional alias is used as the code and gives customAlias true; an alias that \
+                    already exists in any status gives 409 ALIAS_ALREADY_EXISTS. Without an alias a random code \
+                    is generated. Submitting the same URL twice creates two different codes. An optional expiresAt \
+                    (ISO-8601 with an explicit offset or Z, strictly in the future, at most 10 years ahead) makes the \
+                    public redirect return 410 SHORT_URL_EXPIRED from that instant; without it the link never \
+                    expires. Errors are RFC 7807 problem documents with an errorCode; 400 responses for \
+                    VALIDATION_FAILED, INVALID_URL and INVALID_ALIAS also carry an errors array naming the field.""")
+    @ApiResponse(responseCode = "201", description = "Created",
+            headers = @Header(name = "Location", description = "The management resource, /api/v1/urls/{shortCode}",
+                    schema = @Schema(type = "string")),
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ShortUrlResponse.class)))
+    @ApiResponse(responseCode = "400",
+            description = "VALIDATION_FAILED, MALFORMED_REQUEST, INVALID_URL or INVALID_ALIAS",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "406",
+            description = "NOT_ACCEPTABLE. The only response type is application/json; an unacceptable Accept is "
+                    + "rejected before anything is created. An unparseable Accept also gets 406, with no body.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "409",
+            description = "ALIAS_ALREADY_EXISTS. If this 409 is unexpected because an earlier create's 201 was "
+                    + "lost (the response failed to arrive or the client disconnected after the commit), call "
+                    + "GET /api/v1/urls/{alias}. It returns 200 only if the alias belongs to the caller, which "
+                    + "confirms the earlier create succeeded.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "415", description = "UNSUPPORTED_MEDIA_TYPE",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "503", description = "SHORT_CODE_UNAVAILABLE",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    ResponseEntity<ShortUrlResponse> create(@Valid @RequestBody CreateShortUrlRequest request,
+            @Parameter(hidden = true) Authentication authentication) {
+        // authentication.getName() is the configured lowercase username, whatever case the client typed (D54).
+        ShortUrlView view = service.create(new CreateShortUrlCommand(request.originalUrl(), request.alias(),
+                authentication.getName(), instantOf(request.expiresAt())));
+        return ResponseEntity.created(links.location(view.shortCode())).body(ShortUrlResponse.from(view, links));
+    }
+
+    @GetMapping("/{code}")
+    @Operation(summary = "Get a short URL",
+            description = """
+                    Returns the short URL only to its creator or to an ADMIN. A code that is unknown, deleted or \
+                    owned by someone else gives the same 404 SHORT_URL_NOT_FOUND, never 403 (D4, D13). DEACTIVATED \
+                    links are returned, with their status. The code is case-sensitive (D6). After an unexpected \
+                    409 ALIAS_ALREADY_EXISTS on create, call this operation with the alias. It returns 200 only if \
+                    the alias is the caller's own, which confirms that an earlier create whose 201 was lost did \
+                    succeed; a 404 means the alias belongs to someone else.""",
+            parameters = @Parameter(name = "code", in = ParameterIn.PATH,
+                    description = "The short code: Base62, 3 to 32 characters, case-sensitive. A value that can "
+                            + "never be a code gets 404."))
+    @ApiResponse(responseCode = "200", description = "The short URL",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ShortUrlResponse.class)))
+    @ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "404",
+            description = "SHORT_URL_NOT_FOUND. The code is unknown, malformed, deleted, or not the caller's; the "
+                    + "responses are indistinguishable.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "406",
+            description = "NOT_ACCEPTABLE. The only response type is application/json. An unparseable Accept also "
+                    + "gets 406, with no body.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    ShortUrlResponse get(@PathVariable("code") String code, @Parameter(hidden = true) Authentication authentication) {
+        return ShortUrlResponse.from(service.get(code, callerOf(authentication)), links);
+    }
+
+    @GetMapping("/{code}/stats")
+    @Operation(summary = "Get click statistics for a short URL",
+            description = """
+                    Returns the all-time click count (totalClicks), the time of the latest click (lastAccessedAt, \
+                    an ISO-8601 UTC instant, or null before the first click) and a per-day breakdown (daily) with \
+                    one entry for every local date from `from` to `to`, including days with 0 clicks. Days are \
+                    local calendar days in the requested time zone, so a day can be 23 or 25 hours long where the \
+                    zone changes its clock. Only the creator or an ADMIN may read the stats; a code that is \
+                    unknown, malformed, deleted or owned by someone else gives the same 404 SHORT_URL_NOT_FOUND \
+                    (D4, D13). DEACTIVATED links are returned. Parameters are validated before the link is looked \
+                    up, so invalid parameters give 400 even for a code the caller cannot see. Only the parameters \
+                    timezone, from and to are accepted, each at most once; any other or repeated name gives 400 \
+                    MALFORMED_REQUEST.""",
+            parameters = {
+                @Parameter(name = "code", in = ParameterIn.PATH,
+                        description = "The short code: Base62, 3 to 32 characters, case-sensitive. A value that "
+                                + "can never be a code gets 404."),
+                @Parameter(name = StatsParameter.TIMEZONE_NAME, in = ParameterIn.QUERY, required = false,
+                        description = "IANA time zone ID used to bucket clicks into local days, for example "
+                                + "America/New_York or Asia/Kolkata. Optional; defaults to UTC. The value is "
+                                + "case-sensitive and not trimmed. UTC offsets such as +05:00 or Z, prefixed offsets "
+                                + "such as UTC+5 or GMT-3, UT and three-letter abbreviations such as PST are "
+                                + "rejected with 400. Etc/GMT+5 and similar Etc/GMT zones are accepted, but follow "
+                                + "the IANA (POSIX) sign convention: Etc/GMT+5 is five hours BEHIND UTC (UTC-5). A "
+                                + "+ in a query string must be sent as %2B, or it is read as a space and rejected.",
+                        schema = @Schema(type = "string", defaultValue = "UTC", example = "America/New_York")),
+                @Parameter(name = StatsParameter.FROM_NAME, in = ParameterIn.QUERY, required = false,
+                        description = "First local date, inclusive, in the time zone, as yyyy-MM-dd between "
+                                + "1970-01-01 and 9999-12-31. Optional; defaults to 29 days before `to` (so the "
+                                + "default window is the last 30 days), but not before 1970-01-01. The window "
+                                + "from..to may hold at most 366 days, and from must not be after to.",
+                        schema = @Schema(type = "string", format = "date", example = "2026-03-07")),
+                @Parameter(name = StatsParameter.TO_NAME, in = ParameterIn.QUERY, required = false,
+                        description = "Last local date, inclusive, in the time zone, as yyyy-MM-dd between "
+                                + "1970-01-01 and 9999-12-31. Optional; defaults to today in the time zone. Future "
+                                + "dates are accepted and count 0.",
+                        schema = @Schema(type = "string", format = "date", example = "2026-03-09"))
+            })
+    @ApiResponse(responseCode = "200", description = "The statistics",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ShortUrlStatsResponse.class)))
+    @ApiResponse(responseCode = "400",
+            description = "VALIDATION_FAILED (errors names the parameter) or MALFORMED_REQUEST (unknown or repeated "
+                    + "parameter)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "404",
+            description = "SHORT_URL_NOT_FOUND. The code is unknown, malformed, deleted, or not the caller's; the "
+                    + "responses are indistinguishable.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "406",
+            description = "NOT_ACCEPTABLE. The only response type is application/json. An unparseable Accept also "
+                    + "gets 406, with no body.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    ShortUrlStatsResponse stats(@PathVariable("code") String code,
+            @Parameter(hidden = true) @RequestParam MultiValueMap<String, String> query,
+            @Parameter(hidden = true) Authentication authentication) throws ServletRequestBindingException {
+        requireOnlyKnownSingleParameters(query);
+        return ShortUrlStatsResponse.from(service.stats(code, query.getFirst(StatsParameter.TIMEZONE.wireName()),
+                query.getFirst(StatsParameter.FROM.wireName()), query.getFirst(StatsParameter.TO.wireName()),
+                callerOf(authentication)));
+    }
+
+    /**
+     * D100: an unknown or repeated query parameter name is a malformed request. The name is never echoed, so the
+     * exception text is fixed.
+     */
+    private static void requireOnlyKnownSingleParameters(MultiValueMap<String, String> query)
+            throws ServletRequestBindingException {
+        for (var entry : query.entrySet()) {
+            if (!STATS_PARAMETERS.contains(entry.getKey()) || entry.getValue().size() != 1) {
+                throw new ServletRequestBindingException("Unexpected or repeated query parameter");
+            }
+        }
+    }
+
+    @PatchMapping(path = "/{code}", consumes = MediaType.APPLICATION_JSON_VALUE)   // D88: application/json only
+    @Operation(summary = "Deactivate or reactivate a short URL, or change its expiry",
+            description = """
+                    Body {"active": false} deactivates the short URL and {"active": true} reactivates it. \
+                    {"expiresAt": "..."} sets, extends or shortens the expiry (strictly in the future, at most 10 \
+                    years ahead); {"expiresAt": null} clears it; omitting expiresAt leaves it unchanged. Both \
+                    fields may be sent together; a body with neither gives 400 VALIDATION_FAILED. Extending or \
+                    clearing the expiry of an expired link makes it redirect again. Setting the expiry it already \
+                    has changes nothing. If active is redundant, the whole request fails with 409 and nothing is \
+                    applied. Only the \
+                    creator or an ADMIN may do it; anyone else gets the same 404 SHORT_URL_NOT_FOUND as for an \
+                    unknown, malformed or deleted code. A deactivated link's public redirect returns 404 until it \
+                    is reactivated. Only a JSON boolean is accepted for active: a string or a number gives 400 \
+                    MALFORMED_REQUEST. A redundant change (deactivating a deactivated link, reactivating an active \
+                    one) gives 409 SHORT_URL_ALREADY_DEACTIVATED or SHORT_URL_ALREADY_ACTIVE. 409 \
+                    CONCURRENT_MODIFICATION means another request changed the link at the same moment: read it \
+                    with GET and retry if still needed. Only application/json is accepted as the request type.""",
+            parameters = @Parameter(name = "code", in = ParameterIn.PATH,
+                    description = "The short code: Base62, 3 to 32 characters, case-sensitive. A value that can "
+                            + "never be a code gets 404."),
+            requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(required = true,
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                            schema = @Schema(implementation = UpdateShortUrlRequest.class))))
+    @ApiResponse(responseCode = "200", description = "The short URL after the change",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ShortUrlResponse.class)))
+    @ApiResponse(responseCode = "400", description = "VALIDATION_FAILED or MALFORMED_REQUEST",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "404",
+            description = "SHORT_URL_NOT_FOUND. The code is unknown, malformed, deleted, or not the caller's; the "
+                    + "responses are indistinguishable.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "406",
+            description = "NOT_ACCEPTABLE. The only response type is application/json; an unacceptable Accept is "
+                    + "rejected before anything changes. An unparseable Accept also gets 406, with no body.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "409",
+            description = "SHORT_URL_ALREADY_DEACTIVATED, SHORT_URL_ALREADY_ACTIVE or CONCURRENT_MODIFICATION",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "415", description = "UNSUPPORTED_MEDIA_TYPE. Only application/json is accepted.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    ShortUrlResponse update(@PathVariable("code") String code, @Valid @RequestBody UpdateShortUrlRequest request,
+            @Parameter(hidden = true) Authentication authentication) {
+        if ((!request.hasActive() && !request.hasExpiresAt()) || (request.hasActive() && request.getActive() == null)) {
+            throw new InvalidUpdateRequestException();                      // D114: checked before any lookup
+        }
+        UpdateShortUrlCommand command = new UpdateShortUrlCommand(request.getActive(), request.hasExpiresAt(),
+                instantOf(request.getExpiresAt()));
+        return ShortUrlResponse.from(service.update(code, command, callerOf(authentication)), links);
+    }
+
+    @DeleteMapping("/{code}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Operation(summary = "Delete a short URL (ADMIN only)",
+            description = """
+                    The delete is soft: the row is kept for audit. Afterwards the code gets 404 everywhere, for \
+                    ADMIN too, and can never be reused (a create with that alias gets 409 ALIAS_ALREADY_EXISTS). \
+                    Deleting a DEACTIVATED link is allowed. A USER always gets 403 ACCESS_DENIED, whatever the code \
+                    and whoever owns it. 409 CONCURRENT_MODIFICATION means another request changed the link at the \
+                    same moment: read it with GET and retry if still needed.""",
+            parameters = @Parameter(name = "code", in = ParameterIn.PATH,
+                    description = "The short code: Base62, 3 to 32 characters, case-sensitive. A value that can "
+                            + "never be a code gets 404."))
+    @ApiResponse(responseCode = "204", description = "Deleted; no content")
+    @ApiResponse(responseCode = "401", description = "AUTHENTICATION_REQUIRED",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "403", description = "ACCESS_DENIED. Only an ADMIN may delete.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "404",
+            description = "SHORT_URL_NOT_FOUND. The code is unknown, malformed or already deleted; the responses "
+                    + "are indistinguishable.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "406",
+            description = "NOT_ACCEPTABLE. The only response type is application/json; an unacceptable Accept is "
+                    + "rejected before anything changes. An unparseable Accept also gets 406, with no body.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "409", description = "CONCURRENT_MODIFICATION",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    void delete(@PathVariable("code") String code, @Parameter(hidden = true) Authentication authentication) {
+        service.delete(code, callerOf(authentication));
+    }
+
+    /**
+     * Exact authority check. The role hierarchy is applied only by the authorization managers, so
+     * {@code getAuthorities()} holds {@code ROLE_ADMIN} alone for the admin (never the implied {@code ROLE_USER}).
+     * The username is the configured lowercase name, whatever case the client typed (D54).
+     */
+    private static Instant instantOf(OffsetDateTime dateTime) {
+        return dateTime == null ? null : dateTime.toInstant();
+    }
+
+    static Caller callerOf(Authentication authentication) {
+        boolean admin = authentication.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch(Role.ADMIN.authority()::equals);
+        return new Caller(authentication.getName(), admin);
+    }
+}

@@ -3,11 +3,11 @@ package com.schwab.urlshortener.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.schwab.urlshortener.domain.ClickEvent;
-import com.schwab.urlshortener.domain.ShortUrl;
 import com.schwab.urlshortener.repository.ClickEventRepository.DayCount;
 import com.schwab.urlshortener.service.StatsPeriod;
 import com.schwab.urlshortener.support.RepositoryTest;
+import com.schwab.urlshortener.util.domain.ClickEvent;
+import com.schwab.urlshortener.util.domain.ShortUrl;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;

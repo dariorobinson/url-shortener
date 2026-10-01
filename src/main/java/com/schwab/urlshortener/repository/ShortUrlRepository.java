@@ -1,6 +1,6 @@
 package com.schwab.urlshortener.repository;
 
-import com.schwab.urlshortener.domain.ShortUrl;
+import com.schwab.urlshortener.util.domain.ShortUrl;
 import java.time.Instant;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;

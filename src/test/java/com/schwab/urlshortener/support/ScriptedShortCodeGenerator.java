@@ -1,6 +1,6 @@
 package com.schwab.urlshortener.support;
 
-import com.schwab.urlshortener.shortcode.ShortCodeGenerator;
+import com.schwab.urlshortener.util.shortcode.ShortCodeGenerator;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;

@@ -4,8 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.schwab.urlshortener.api.error.ErrorCode;
-import com.schwab.urlshortener.api.error.ProblemDetails;
+import com.schwab.urlshortener.controller.error.ErrorCode;
+import com.schwab.urlshortener.controller.error.ProblemDetails;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;

@@ -146,28 +146,29 @@ support/IntegrationTestBase     support/@RepositoryTest
 
 ```
 com.schwab.urlshortener
-├── api/                ShortUrlController, RedirectController, ShortUrlLinks (links built from APP_BASE_URL)
+├── controller/         ShortUrlController, RedirectController, ShortUrlLinks (links built from APP_BASE_URL)
 │   ├── dto/            request/response records; UpdateShortUrlRequest (presence-tracking PATCH body);
 │   │                   StrictOffsetDateTimeDeserializer
 │   └── error/          ErrorCode catalogue, ProblemDetails factory, GlobalExceptionHandler,
 │                       ProblemErrorController (/error), FieldViolation, PayloadTooLargeException
 ├── service/            ShortUrlService, RedirectService, StatsPeriod, ExpirationPolicy, commands and views
 │   └── exception/      service exceptions mapped by the advice
-├── domain/             ShortUrl (factory, intention-revealing transitions, no setters), ShortUrlStatus, ClickEvent
-│   └── exception/      transition exceptions
 ├── repository/         ShortUrlRepository (incl. the atomic click UPDATE), ClickEventRepository (daily counts),
 │                       PostgresServerErrors (the only class that imports org.postgresql)
-├── analytics/          ClickRecorder (interface) + JpaClickRecorder (own REQUIRES_NEW transaction)
-├── shortcode/          ShortCodeGenerator + SecureRandomShortCodeGenerator, ShortCodeFormat (D6)
-├── validation/         UrlValidator (D11, D28, D47, D49, D84), AliasPolicy (D6, D29, D48), LocationEncoder (D75)
+├── util/               supporting building blocks (engineer direction, D132)
+│   ├── domain/         ShortUrl (factory, intention-revealing transitions, no setters), ShortUrlStatus, ClickEvent
+│   │   └── exception/  transition exceptions
+│   ├── analytics/      ClickRecorder (interface) + JpaClickRecorder (own REQUIRES_NEW transaction)
+│   ├── shortcode/      ShortCodeGenerator + SecureRandomShortCodeGenerator, ShortCodeFormat (D6)
+│   ├── validation/     UrlValidator (D11, D28, D47, D49, D84), AliasPolicy (D6, D29, D48), LocationEncoder (D75)
+│   └── web/            RequestIdFilter, RequestBodyLimitFilter, their registration and HttpProperties
 ├── security/           SecurityConfig (filter chain, RoleHierarchy), user accounts from configuration,
 │                       401/403 problem writers
-├── web/                RequestIdFilter, RequestBodyLimitFilter, their registration and HttpProperties
 └── config/             Clock, Jackson (strict booleans), OpenAPI, short-code / alias / expiration properties,
                         Tomcat error-page valve
 ```
 
-Dependency direction: `api` → `service` → `repository` / `domain`; entities never leave the service layer. `web` depends on `api.error` and `security`; nothing depends on `web`.
+Dependency direction: `controller` → `service` → `repository` / `util.domain`; entities never leave the service layer. `util.web` depends on `controller.error` and `security`; nothing depends on `util.web`.
 
 ## Database schema (V1 *implemented (US-002)*, amended by D47; V2 *implemented (US-010)*; V3 *implemented (US-016)*)
 
@@ -304,7 +305,7 @@ The full detail is in the US-006 Design note.
   - Unknown fields and duplicate keys → `MALFORMED_REQUEST`.
 - **Response** `ShortUrlResponse`, shared with US-007: `shortCode`, `shortUrl`, `originalUrl`, `status`, `customAlias`, `clickCount`, `createdAt` (ISO-8601 UTC), `lastAccessedAt` (nullable, always present). There is no `createdBy`.
   - `Location: /api/v1/urls/{code}` is relative.
-  - `shortUrl` is APP_BASE_URL with trailing slashes removed, plus `/` and the code, built by `api/ShortUrlLinks`. It never uses `Host` or forwarded headers (D33).
+  - `shortUrl` is APP_BASE_URL with trailing slashes removed, plus `/` and the code, built by `controller/ShortUrlLinks`. It never uses `Host` or forwarded headers (D33).
 - **Flow:** `ShortUrlController` → `ShortUrlService.create(CreateShortUrlCommand)` → `ShortUrlView`, mapped to `ShortUrlResponse` in `api`. Entities never leave `service`.
 - **Content negotiation (D70):** `@RequestMapping(path = "/api/v1/urls", produces = application/json)` on the class. An unacceptable `Accept` (for example `application/xml`, `text/plain` or `application/problem+json`) gets `406 NOT_ACCEPTABLE` with no row created (US-006 AC17).
 
@@ -334,7 +335,7 @@ The full detail is in the US-007 Design note.
 The full detail is in the US-008 Design note.
 
 - **Security:** rule 7 (`GET`/`HEAD /*`, D32) admits it; `SecurityConfig` is unchanged. Invalid Basic credentials still get 401 (D55).
-- **Controller:** `api/RedirectController`, `@GetMapping("/{code}")` with no class-level mapping, no base class and **no `produces`** (D70). Any `Accept` gets the 302. HEAD is served by the same mapping.
+- **Controller:** `controller/RedirectController`, `@GetMapping("/{code}")` with no class-level mapping, no base class and **no `produces`** (D70). Any `Accept` gets the 302. HEAD is served by the same mapping.
 - **Resolution:** `service/RedirectService.resolve(code)`:
   1. The D6 format check (`ShortCodeFormat`), **before** the transaction opens, so a malformed code takes no connection (D72).
   2. `findByShortCode` inside a read-only `TransactionTemplate`. There is no `@Transactional`.
@@ -511,7 +512,7 @@ Rule: no handler other than the redirect may be mapped to a single path segment,
 RFC 7807 `ProblemDetail` responses with an `errorCode` extension, produced by a single `@RestControllerAdvice`. Stack traces and exception messages are never included; unexpected errors return a generic 500 with a request ID.
 
 *Implemented (US-005):*
-- **`api/error/ErrorCode`** holds exactly the D31 catalogue. Each constant carries its HTTP status:
+- **`controller/error/ErrorCode`** holds exactly the D31 catalogue. Each constant carries its HTTP status:
   - 400: `VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_URL`, `INVALID_ALIAS`
   - 409: `ALIAS_ALREADY_EXISTS`, `SHORT_URL_ALREADY_DEACTIVATED`, `SHORT_URL_ALREADY_ACTIVE`, `CONCURRENT_MODIFICATION`
   - 404: `SHORT_URL_NOT_FOUND`
@@ -519,12 +520,12 @@ RFC 7807 `ProblemDetail` responses with an `errorCode` extension, produced by a 
   - 401: `AUTHENTICATION_REQUIRED`
   - 403: `ACCESS_DENIED`
   - 500: `INTERNAL_ERROR`
-- **`api/error/ProblemDetails.of(code, detail, requestUri)`** is the single factory for every error body. The shape is exactly `type` (`about:blank`), `title` (reason phrase), `status`, `detail` (generic), `instance` (request path, no query) and `errorCode`. `instance` is set because Spring MVC fills it in for controller-returned `ProblemDetail`s. `errorCode` is top-level only when serialized by the context's `ObjectMapper` (`ProblemDetailJacksonMixin`).
+- **`controller/error/ProblemDetails.of(code, detail, requestUri)`** is the single factory for every error body. The shape is exactly `type` (`about:blank`), `title` (reason phrase), `status`, `detail` (generic), `instance` (request path, no query) and `errorCode`. `instance` is set because Spring MVC fills it in for controller-returned `ProblemDetail`s. `errorCode` is top-level only when serialized by the context's `ObjectMapper` (`ProblemDetailJacksonMixin`).
 - The security entry point and access-denied handler write through this factory. US-006's `@RestControllerAdvice` must use it too, so any later extension (such as a request ID) reaches every error.
 - Requests rejected by `StrictHttpFirewall` get Spring's plain 400, and requests to unknown paths get Boot's default error JSON, until US-006's advice handles them.
 
 *Implemented (US-006); US-006 Design note §4:*
-- **`api/error/GlobalExceptionHandler`** is the single `@RestControllerAdvice`. It extends `ResponseEntityExceptionHandler` and overrides `handleExceptionInternal`, so every Spring MVC exception body is rebuilt with `ProblemDetails.of`, and Spring's default `detail` texts never reach clients. Headers such as `Allow` and `Accept` are kept.
+- **`controller/error/GlobalExceptionHandler`** is the single `@RestControllerAdvice`. It extends `ResponseEntityExceptionHandler` and overrides `handleExceptionInternal`, so every Spring MVC exception body is rebuilt with `ProblemDetails.of`, and Spring's default `detail` texts never reach clients. Headers such as `Allow` and `Accept` are kept.
 - **Mappings:**
   - `MethodArgumentNotValidException` → 400 `VALIDATION_FAILED`
   - `HttpMessageNotReadableException` → 400 `MALFORMED_REQUEST`, with no parser text
@@ -564,7 +565,7 @@ RFC 7807 `ProblemDetail` responses with an `errorCode` extension, produced by a 
 ### OpenAPI — *implemented (US-006)*
 - `config/OpenApiConfig` declares `@OpenAPIDefinition` and one `@SecurityScheme` `basicAuth` (HTTP, `basic`).
 - The requirement is applied **per controller** (`@SecurityRequirement` on `ShortUrlController`), not globally, so the public redirect (US-008) is never documented as secured.
-- Error responses are declared on each operation with a documentation-only `Problem` schema (`api/error/ErrorResponseSchema`). springdoc skips advice handlers that have no `@ResponseStatus`, and it models `ProblemDetail` with a nested `properties` map.
+- Error responses are declared on each operation with a documentation-only `Problem` schema (`controller/error/ErrorResponseSchema`). springdoc skips advice handlers that have no `@ResponseStatus`, and it models `ProblemDetail` with a nested `properties` map.
 - Every error `@Content` names `mediaType = "application/problem+json"` explicitly. Otherwise springdoc falls back to the mapping's `produces` (`application/json`, D70) and documents errors under the wrong type. `POST /api/v1/urls` documents 406 (D61, D70).
 - The create operation states that IDN hosts are rejected and that clients must submit punycode (D49).
 - *Implemented (US-007):* `GET /api/v1/urls/{code}` documents:

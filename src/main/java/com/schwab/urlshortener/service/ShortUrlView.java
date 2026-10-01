@@ -1,7 +1,7 @@
 package com.schwab.urlshortener.service;
 
-import com.schwab.urlshortener.domain.ShortUrl;
-import com.schwab.urlshortener.domain.ShortUrlStatus;
+import com.schwab.urlshortener.util.domain.ShortUrl;
+import com.schwab.urlshortener.util.domain.ShortUrlStatus;
 import java.time.Instant;
 
 /**

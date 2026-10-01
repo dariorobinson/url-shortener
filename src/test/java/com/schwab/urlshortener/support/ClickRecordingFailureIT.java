@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.schwab.urlshortener.support.ShortUrlTestData.LifecycleState;
-import com.schwab.urlshortener.validation.LocationEncoder;
+import com.schwab.urlshortener.util.validation.LocationEncoder;
 import java.net.http.HttpResponse;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.AfterEach;

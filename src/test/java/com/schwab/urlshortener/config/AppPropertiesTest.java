@@ -2,8 +2,8 @@ package com.schwab.urlshortener.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.schwab.urlshortener.validation.AliasPolicy;
-import com.schwab.urlshortener.validation.UrlValidator;
+import com.schwab.urlshortener.util.validation.AliasPolicy;
+import com.schwab.urlshortener.util.validation.UrlValidator;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;

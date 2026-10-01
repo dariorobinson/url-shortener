@@ -1,6 +1,6 @@
 package com.schwab.urlshortener.config;
 
-import com.schwab.urlshortener.shortcode.SecureRandomShortCodeGenerator;
+import com.schwab.urlshortener.util.shortcode.SecureRandomShortCodeGenerator;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import org.springframework.boot.context.properties.ConfigurationProperties;

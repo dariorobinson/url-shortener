@@ -5,7 +5,7 @@ import static com.schwab.urlshortener.support.TestUsers.ALICE_PASSWORD;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.schwab.urlshortener.domain.ShortUrl;
+import com.schwab.urlshortener.util.domain.ShortUrl;
 import java.util.Arrays;
 import java.util.Map;
 import org.junit.jupiter.api.Test;

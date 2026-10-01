@@ -1,13 +1,13 @@
 package com.schwab.urlshortener.service;
 
-import com.schwab.urlshortener.analytics.ClickRecorder;
-import com.schwab.urlshortener.domain.ShortUrl;
-import com.schwab.urlshortener.domain.ShortUrlStatus;
 import com.schwab.urlshortener.repository.PostgresServerErrors;
 import com.schwab.urlshortener.repository.ShortUrlRepository;
 import com.schwab.urlshortener.service.exception.ShortUrlExpiredException;
 import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
-import com.schwab.urlshortener.shortcode.ShortCodeFormat;
+import com.schwab.urlshortener.util.analytics.ClickRecorder;
+import com.schwab.urlshortener.util.domain.ShortUrl;
+import com.schwab.urlshortener.util.domain.ShortUrlStatus;
+import com.schwab.urlshortener.util.shortcode.ShortCodeFormat;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;

@@ -1,6 +1,6 @@
 package com.schwab.urlshortener.security;
 
-import com.schwab.urlshortener.domain.ShortUrl;
+import com.schwab.urlshortener.util.domain.ShortUrl;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;

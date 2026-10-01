@@ -1,7 +1,7 @@
 package com.schwab.urlshortener.config;
 
-import com.schwab.urlshortener.shortcode.SecureRandomShortCodeGenerator;
-import com.schwab.urlshortener.shortcode.ShortCodeGenerator;
+import com.schwab.urlshortener.util.shortcode.SecureRandomShortCodeGenerator;
+import com.schwab.urlshortener.util.shortcode.ShortCodeGenerator;
 import java.security.SecureRandom;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;

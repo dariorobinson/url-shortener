@@ -9,15 +9,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.schwab.urlshortener.analytics.ClickRecorder;
-import com.schwab.urlshortener.domain.ShortUrl;
 import com.schwab.urlshortener.repository.ShortUrlRepository;
 import com.schwab.urlshortener.service.exception.ShortUrlExpiredException;
 import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
+import com.schwab.urlshortener.util.analytics.ClickRecorder;
+import com.schwab.urlshortener.util.domain.ShortUrl;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Optional;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;

@@ -45,7 +45,7 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
 - **Date:** 2026-09-29
 - **AI recommendation:** The assignment specifies Java 21; the local JDK was 25. The AI proposed compiling with `--release 21` on JDK 25.
 - **Engineer decision:** **Rejected — use Java 25.**
-- **Rationale:** *(engineer to add)*. The AI flagged the trade-off that the project will not build on a Java 21 toolchain; the engineer accepted it.
+- **Rationale:** My local machine runs Java 25 so that's what we went with. The AI flagged the trade-off that the project will not build on a Java 21 toolchain; the engineer accepted it.
 - **Validation:** `mvn -v` reports Java 25.0.2.
 
 ## Entry 4 — Development environment setup
@@ -96,7 +96,6 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
 - **AI recommendation (planner):** 15 stories (US-001–US-015). Task 6 split into create (US-006) and read (US-007); Task 9 split into click recording (US-010) and the stats API (US-011). Task 12 (expiration implementation) is a non-story placeholder (`docs/stories/PLACEHOLDER-expiration.md`). Open questions were raised rather than decided (versions, response shapes, errorCode catalogue, PATCH body, conflict signalling, HEAD behaviour, reserved words, own-host definition, stats range/shape, HSTS, JaCoCo threshold).
 - **Orchestrator review findings (fixed by planner, no decisions taken):** D5 had no test; no ACs for 401 on PATCH/DELETE/stats, for request-body validation, or for the OpenAPI docs; ambiguous USER-DELETE-on-missing-code (clarified: 403, because the role check comes before the lookup); a correctness risk that Hibernate's full-column UPDATE on PATCH could overwrite atomically incremented `click_count` (now a US-002 design-gate item); a risk that click recording in the redirect transaction breaks fail-open; the errorCode catalogue must be ratified at US-005, not US-006; `swagger-ui` could never be a reserved alias; US-008 had a spurious dependency on US-007 and was missing one on US-005; US-013's risk text contradicted the plan's order.
 - **Engineer decision:** **Accepted** all five G1 recommendations: US-013 depends on US-011; US-014/US-015 stay in plan order; commit groups C1–C10; architect writes the US-012/US-013 analysis docs with senior-engineer review; start US-001 next. Accepted together with the QA workflow change in Entry 8, which requires the planner to add QA test ownership to the stories.
-- **Rationale:** *(engineer to add)*
 - **Validation:** Orchestrator read all 15 story files, checked that the dependency graph is acyclic, and spot-checked the revised ACs. No code exists; no build was run.
 
 ## Entry 8 — QA-tester agent and integration-test database
@@ -133,7 +132,6 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
   - `VALIDATION_FAILED` vs a new `INVALID_TIMEZONE` (US-011).
   - Who writes US-015.
   - Whether JaCoCo moves from US-014 to US-001.
-- **Rationale:** *(engineer to add)*
 - **Validation:** Orchestrator checked that no provisional errorCodes or H2 references remain, that every story has the Owner column and QA notes, and that the dependency graph is still acyclic.
 
 ## Entry 10 — US-001 design (G2)
@@ -1155,3 +1153,13 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
 - **AI work (main session, no agents):** rewrote the README (quick start, tests, API with `curl` examples, configuration, process); replaced the planned/designed markers in `architecture.md` with a current overview, package structure and API table; finalised the scenario and requirement statuses; wrote `engineering-summary.md`, including where the engineer overrode AI recommendations and where the process caught AI mistakes.
 - **Engineer decision:** "approve all": US-015 is `Done`; committed as C10 and pushed. The engineer will add the outstanding "(engineer to add)" rationales later.
 - **Validation:** no code changed; endpoints, variable names and defaults in the README were checked against `application.yml`, `.env.example`, the properties classes and the live Compose smoke test of US-014.
+
+## Entry 39 — Package refactor (post-backlog)
+
+- **Date:** 2026-09-30
+- **Engineer request:** move `validation`, `web`, `shortcode`, `domain` and `analytics` to a `resources` package, and rename `api` to `controller`, with no breaking changes, all tests passing and the app running.
+- **AI clarification:** "resources" could mean the `src/main/resources` folder, where Java files would not compile, or a Java package. The main session asked; the engineer chose a Java package, first `com.schwab.urlshortener.resources`, then asked (before commit) for it to be named `com.schwab.urlshortener.util` (D132).
+- **AI work (main session, no agents):** `git mv` of the main and test packages (history kept); package and import rewrite in 93 files; one test that reads a source file by path updated; import blocks re-sorted; `CLAUDE.md` and `architecture.md` updated. Story files keep their historical paths.
+- **Engineer decision:** requested by the engineer.
+- **Rationale:** *(engineer to add)*
+- **Validation:** `./mvnw -o clean verify` exit 0 with identical counts (Surefire 1181/0, Failsafe 924/0, LINE coverage 854/867); the app built and run with `docker compose up --build` in an isolated project and smoke-tested (health, create, redirect, stats, PATCH, 404 after deactivate, ADMIN delete, OpenAPI), then removed.

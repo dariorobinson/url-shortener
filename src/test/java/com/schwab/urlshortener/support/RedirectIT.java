@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.schwab.urlshortener.validation.LocationEncoder;
+import com.schwab.urlshortener.util.validation.LocationEncoder;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.Socket;

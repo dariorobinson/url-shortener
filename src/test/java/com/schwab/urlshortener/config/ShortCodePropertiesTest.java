@@ -2,7 +2,7 @@ package com.schwab.urlshortener.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.schwab.urlshortener.shortcode.ShortCodeGenerator;
+import com.schwab.urlshortener.util.shortcode.ShortCodeGenerator;
 import java.security.SecureRandom;
 import java.util.random.RandomGenerator;
 import org.junit.jupiter.api.Test;

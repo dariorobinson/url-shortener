@@ -1,7 +1,7 @@
 package com.schwab.urlshortener.config;
 
-import com.schwab.urlshortener.validation.AliasPolicy;
-import com.schwab.urlshortener.validation.UrlValidator;
+import com.schwab.urlshortener.util.validation.AliasPolicy;
+import com.schwab.urlshortener.util.validation.UrlValidator;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

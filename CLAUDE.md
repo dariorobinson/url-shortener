@@ -35,7 +35,7 @@ Base package: `com.schwab.urlshortener`. `JAVA_HOME` must point to JDK 25.
 ## Code conventions
 
 **Structure**
-- Layers: `api` (controllers, DTOs, error handling) → `service` → `repository`. Entities never leave the service layer.
+- Layers: `controller` (controllers, DTOs, error handling) → `service` → `repository`. Entities never leave the service layer. Supporting packages (`domain`, `validation`, `shortcode`, `analytics`, `web`) live under `util` (engineer direction, D132).
 - DTOs and value objects are Java **records**, validated with Bean Validation.
 - Inject `Clock` wherever the current time is needed; never call `Instant.now()` directly.
 

@@ -10,7 +10,7 @@ import com.schwab.urlshortener.support.EncodedUrls;
 import com.schwab.urlshortener.support.ScriptedShortCodeGenerator;
 import com.schwab.urlshortener.support.ShortUrlTestData;
 import com.schwab.urlshortener.support.TestUsers;
-import com.schwab.urlshortener.validation.LocationEncoder;
+import com.schwab.urlshortener.util.validation.LocationEncoder;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;

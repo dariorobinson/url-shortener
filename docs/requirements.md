@@ -1,6 +1,6 @@
 # Requirements
 
-Last updated: 2026-09-30 (final, US-015; D1–D131). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
+Last updated: 2026-09-30 (package refactor, D132). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
 
 ## Functional requirements
 
@@ -166,6 +166,7 @@ Last updated: 2026-09-30 (final, US-015; D1–D131). Decisions below were made b
 | D129 | Hardening scope (US-014 G2) | Tier A (H1–H13 in the US-014 design note) is built in US-014; tier B (idempotency key, stats rollups/timeouts, CORS, rate limiting/abuse screening, async click events, HTML 404, NOT VALID constraints, Boot 4.x) goes to the US-015 production roadmap. |
 | D130 | Request-body limit | 16 KiB by default (`app.http.max-body-bytes`), enforced before authentication; larger bodies get `413 PAYLOAD_TOO_LARGE` (a new error code). |
 | D131 | Connection-pool timeout | `spring.datasource.hikari.connection-timeout` is 3 s, so a pool-exhausted request fails fast. |
+| D132 | Package layout (post-backlog refactor) | `api` is renamed `controller` (with `controller.dto`, `controller.error`); `domain`, `validation`, `shortcode`, `analytics` and `web` move under `com.schwab.urlshortener.util` (first placed in `resources`, renamed to `util` at the engineer's request before commit). Pure refactor: no behaviour, API, schema or configuration change. |
 
 ## Environment and platform decisions
 

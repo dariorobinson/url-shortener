@@ -6,8 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
 import com.schwab.urlshortener.repository.ClickEventRepository.DayCount;
-import com.schwab.urlshortener.service.exception.InvalidStatsQueryException;
 import com.schwab.urlshortener.service.exception.InvalidStatsQueryException.Violation;
+import com.schwab.urlshortener.service.exception.InvalidStatsQueryException;
 import com.schwab.urlshortener.service.exception.StatsParameter;
 import java.time.Duration;
 import java.time.Instant;

@@ -1,6 +1,6 @@
 package com.schwab.urlshortener.support;
 
-import com.schwab.urlshortener.validation.LocationEncoder;
+import com.schwab.urlshortener.util.validation.LocationEncoder;
 
 /**
  * Builds URLs whose D75-encoded form (D84) is an exact number of bytes, by repeating a non-ASCII unit and padding

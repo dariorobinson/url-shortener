@@ -1,6 +1,6 @@
 package com.schwab.urlshortener.support;
 
-import com.schwab.urlshortener.shortcode.ShortCodeGenerator;
+import com.schwab.urlshortener.util.shortcode.ShortCodeGenerator;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
