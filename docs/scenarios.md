@@ -6,7 +6,7 @@ This document records the three required engineering scenarios.
 
 ## Scenario 1 — Greenfield: initial URL-shortening capability
 
-**Status:** In progress.
+**Status:** Done (US-001–US-011, commits C1–C6b).
 
 ### Requirement understanding
 See [requirements.md](requirements.md). The ambiguous requirements were resolved with the engineer before any code was written (decisions D1–D14).
@@ -15,7 +15,7 @@ See [requirements.md](requirements.md). The ambiguous requirements were resolved
 
 | Task | Scope | Status |
 |---|---|---|
-| 0 | Repository and documentation skeleton | Done (pending review) |
+| 0 | Repository and documentation skeleton | Done (C1) |
 | 1 | Maven project, Spring Boot app, Flyway, Docker Compose, Testcontainers base | Done (US-001) |
 | 2 | Domain model, V1 schema, repository | Done (US-002) |
 | 3 | Short-code generator | Done (US-003) |

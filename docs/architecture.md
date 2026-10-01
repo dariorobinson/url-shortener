@@ -1,31 +1,32 @@
 # Architecture
 
-Last updated: 2026-09-30 (US-006 implemented; content negotiation per D70; US-007 implemented; US-008 implemented; US-009 implemented; US-010 implemented; US-011 design approved (G2), D95–D105). Each section is marked *planned*, *designed (US-nnn)*, or *implemented (US-nnn)* as work progresses.
+Last updated: 2026-09-30 (final, US-015). Everything described here is implemented; the per-section markers name the story that delivered it. The decisions referenced as `Dnn` are in [requirements.md](requirements.md).
 
 ## Overview
 
-A layered Spring Boot monolith.
+A layered Spring Boot 3.5 monolith on Java 25 and PostgreSQL 18.
 
 ```
-HTTP ─▶ Controller (DTOs, Bean Validation, ProblemDetail errors)
+HTTP ─▶ RequestIdFilter ─▶ RequestBodyLimitFilter ─▶ Spring Security (HTTP Basic, stateless, deny-by-default)
           │
           ▼
-        Service (business rules, transactions, collision retry, lifecycle, ownership)
-          │         ├─▶ ShortCodeGenerator (interface; SecureRandom Base62 impl)
-          │         ├─▶ UrlValidator / AliasPolicy
-          │         └─▶ ClickRecorder (interface; synchronous JPA impl)
+        Controllers ─── ShortUrlController (/api/v1/urls/**, JSON only)   RedirectController (/{code}, public)
+          │              GlobalExceptionHandler + ProblemErrorController: every error is an RFC 7807 problem
           ▼
-        Repository (Spring Data JPA)
+        Services ────── ShortUrlService (create with collision retry, read, update, delete, stats)
+          │              RedirectService (resolve, expiry check, fail-open click recording)
+          │         ├─▶ ShortCodeGenerator (SecureRandom Base62)   ├─▶ UrlValidator / AliasPolicy / ExpirationPolicy
+          │         └─▶ ClickRecorder (interface; synchronous JPA implementation)
+          ▼
+        Repositories ── Spring Data JPA; one native atomic click UPDATE; one native stats query
           │
           ▼
-        PostgreSQL (Flyway migrations; constraints are the final safeguard)
+        PostgreSQL ──── Flyway V1–V3; UNIQUE / CHECK / FK constraints are the final integrity guarantee
 ```
-
-Spring Security (HTTP Basic, stateless) sits in front of the controllers.
 
 ## Development process
 
-The SDLC is run by a team of Claude Code agents defined in `.claude/agents/`. Every approval gate stops for the human engineer.
+US-001–US-011 were delivered by a team of Claude Code agents defined in `.claude/agents/`; from US-012 the engineer had the main session do the work directly, with the same gates. Every approval gate stops for the human engineer.
 
 ```
 engineer ⇄ main session ⇄ orchestrator ─┬─▶ planner          (docs/stories/)
@@ -141,41 +142,32 @@ support/IntegrationTestBase     support/@RepositoryTest
   - Constraint tests insert through `JdbcTemplate`, which joins the `@DataJpaTest` transaction, so they hit the DB constraint rather than the entity. They assert SQLSTATE plus constraint name from pgjdbc's `ServerErrorMessage`, with one failing statement per test because PostgreSQL aborts the transaction after an error.
   - Tests flush and `clear()` the persistence context before reloading, and assert DB truth with `JdbcTemplate`.
 
-## Package structure (planned; `domain/`, `domain/exception/`, `repository/` *implemented (US-002)*; US-006 entries *implemented (US-006)*)
+## Package structure
 
 ```
 com.schwab.urlshortener
-├── config/            # properties, Clock; OpenApiConfig (US-006: info, HTTP Basic security scheme)
-├── security/          # implemented (US-005): SecurityConfig (filter chain, RoleHierarchy),
-│                      #   UserAccountsConfig/Properties, UserAccounts, Role,
-│                      #   ProblemDetailAuthenticationEntryPoint/AccessDeniedHandler/ResponseWriter
-├── api/               # ShortUrlController, ShortUrlLinks (shortUrl/Location from APP_BASE_URL) (US-006);
-│                      #   RedirectController (GET/HEAD /{code}, never `produces`) (implemented (US-008))
-│   ├── dto/           # CreateShortUrlRequest, ShortUrlResponse (shared with US-007) (US-006);
-│   │                  #   UpdateShortUrlRequest (PATCH body) (implemented (US-009));
-│   │                  #   ShortUrlStatsResponse, DailyClicksResponse (designed (US-011), design approved (G2))
-│   └── error/         # ErrorCode, ProblemDetails (implemented (US-005));
-│                      #   GlobalExceptionHandler, FieldViolation, ErrorResponseSchema (docs only) (US-006)
-├── service/           # ShortUrlService, CreateShortUrlCommand, ShortUrlView (US-006);
-│   │                  #   Caller(username, admin) (implemented (US-007));
-│   │                  #   RedirectService (public resolution, read-only template) (implemented (US-008));
-│   │                  #   StatsPeriod (zone/date parsing, defaults, day starts, densify), ShortUrlStats,
-│   │                  #   DailyClicks (designed (US-011), design approved (G2))
-│   └── exception/     # InvalidUrl/InvalidAlias/AliasAlreadyExists/ShortCodeUnavailable exceptions (US-006);
-│                      #   ShortUrlNotFoundException (implemented (US-007));
-│                      #   ShortUrlConcurrentModificationException (implemented (US-009));
-│                      #   InvalidStatsQueryException (designed (US-011), design approved (G2))
-├── domain/            # ShortUrl entity, ShortUrlStatus; ClickEvent (immutable, click_event) (implemented (US-010))
-│   └── exception/     # ShortUrlAlreadyDeactivated/AlreadyActive/Deleted exceptions
-├── shortcode/         # ShortCodeGenerator + implementation; ShortCodeFormat (D6 format check, shared by
-│                      #   AliasPolicy, US-007 and US-008) (implemented (US-007))
-├── validation/        # UrlValidator, AliasPolicy
-├── analytics/         # ClickRecorder (interface) + JpaClickRecorder (REQUIRES_NEW template) (implemented (US-010))
-└── repository/        # ShortUrlRepository (Spring Data JPA); PostgresServerErrors (US-006; the only
-                       #   class that imports org.postgresql.*); ClickEventRepository and
-                       #   ShortUrlRepository.recordClick (implemented (US-010));
-                       #   ClickEventRepository.countClicksPerDay (designed (US-011), design approved (G2))
+├── api/                ShortUrlController, RedirectController, ShortUrlLinks (links built from APP_BASE_URL)
+│   ├── dto/            request/response records; UpdateShortUrlRequest (presence-tracking PATCH body);
+│   │                   StrictOffsetDateTimeDeserializer
+│   └── error/          ErrorCode catalogue, ProblemDetails factory, GlobalExceptionHandler,
+│                       ProblemErrorController (/error), FieldViolation, PayloadTooLargeException
+├── service/            ShortUrlService, RedirectService, StatsPeriod, ExpirationPolicy, commands and views
+│   └── exception/      service exceptions mapped by the advice
+├── domain/             ShortUrl (factory, intention-revealing transitions, no setters), ShortUrlStatus, ClickEvent
+│   └── exception/      transition exceptions
+├── repository/         ShortUrlRepository (incl. the atomic click UPDATE), ClickEventRepository (daily counts),
+│                       PostgresServerErrors (the only class that imports org.postgresql)
+├── analytics/          ClickRecorder (interface) + JpaClickRecorder (own REQUIRES_NEW transaction)
+├── shortcode/          ShortCodeGenerator + SecureRandomShortCodeGenerator, ShortCodeFormat (D6)
+├── validation/         UrlValidator (D11, D28, D47, D49, D84), AliasPolicy (D6, D29, D48), LocationEncoder (D75)
+├── security/           SecurityConfig (filter chain, RoleHierarchy), user accounts from configuration,
+│                       401/403 problem writers
+├── web/                RequestIdFilter, RequestBodyLimitFilter, their registration and HttpProperties
+└── config/             Clock, Jackson (strict booleans), OpenAPI, short-code / alias / expiration properties,
+                        Tomcat error-page valve
 ```
+
+Dependency direction: `api` → `service` → `repository` / `domain`; entities never leave the service layer. `web` depends on `api.error` and `security`; nothing depends on `web`.
 
 ## Database schema (V1 *implemented (US-002)*, amended by D47; V2 *implemented (US-010)*; V3 *implemented (US-016)*)
 
@@ -280,16 +272,22 @@ HTTP mappings: *implemented (US-009)* (see *Lifecycle* under REST API). `ShortUr
   - A reflection unit test (`RepositoryAnnotationsTest`) pins the SQL, both flags, the absence of `@Transactional`, and that no other repository method is `@Modifying`. This covers the repository-interface gap in `NoTransactionalAnnotationIT`.
 - `ClickEventRepository` is `JpaRepository<ClickEvent, Long>`. `ClickEvent` is `@Immutable`, with a plain `long shortUrlId` (no association) and `ClickEvent.of(id, at)`, which truncates to microseconds.
 
-## REST API (planned)
+## REST API
+
+Interactive documentation: `/swagger-ui.html` (OpenAPI 3 at `/v3/api-docs`).
 
 | Method | Path | Access | Success | Errors |
 |---|---|---|---|---|
-| GET, HEAD | `/{code}` | Public (rule 7) | 302 + `Location` + `Cache-Control: no-store` | 404 (unknown / deleted / deactivated / malformed); 401 only for invalid Basic credentials (D55) |
-| POST | `/api/v1/urls` | USER, ADMIN | 201 + `Location` | 400, 401, 406, 409, 415, 503 |
+| GET, HEAD | `/{code}` | Public | 302, `Location` = stored URL (non-ASCII percent-encoded), `Cache-Control: no-store` | 404 unknown / deactivated / deleted / malformed (identical); 410 `SHORT_URL_EXPIRED` + `no-store` |
+| POST | `/api/v1/urls` | USER, ADMIN | 201, `Location: /api/v1/urls/{code}` | 400, 401, 406, 409, 413, 415, 503 |
 | GET | `/api/v1/urls/{code}` | Owner, ADMIN | 200 | 401, 404, 406 |
-| PATCH | `/api/v1/urls/{code}` | Owner, ADMIN | 200 | 400, 401, 404, 406, 409, 415 (implemented (US-009)) |
-| DELETE | `/api/v1/urls/{code}` | ADMIN | 204 | 401, 403, 404, 406, 409 (implemented (US-009)) |
-| GET, HEAD | `/api/v1/urls/{code}/stats?timezone&from&to` (`timezone`: `UTC` or JDK tzdb ID, default `UTC`, D96; `from`/`to`: inclusive `yyyy-MM-dd` in that zone, default `to` = today, `from` = `max(to − 29, 1970-01-01)`, max 366 days, D97, D98) | Owner, ADMIN | 200 `{shortCode, timezone, from, to, totalClicks, clicksInRange, lastAccessedAt, daily: [{date, clicks}]}` (D101) | 400 `VALIDATION_FAILED` (D99) / `MALFORMED_REQUEST` (D100), 401, 404, 406 (designed (US-011), design approved (G2)) |
+| PATCH | `/api/v1/urls/{code}` | Owner, ADMIN | 200 (`active` and/or `expiresAt`) | 400, 401, 404, 406, 409, 413, 415 |
+| DELETE | `/api/v1/urls/{code}` | ADMIN | 204 (soft delete) | 401, 403, 404, 406, 409 |
+| GET, HEAD | `/api/v1/urls/{code}/stats?timezone&from&to` | Owner, ADMIN | 200 daily counts in the caller's zone | 400, 401, 404, 406 |
+| GET, HEAD | `/actuator/health` | Public | 200 | — |
+| GET | `/actuator/**` | ADMIN | 200 (e.g. `/actuator/metrics/shortener.clicks.lost`) | 401, 403 |
+
+Resource shape (create, details, PATCH): `{shortCode, shortUrl, originalUrl, status, customAlias, clickCount, createdAt, lastAccessedAt, expiresAt, expired}`. Stats: `{shortCode, timezone, from, to, totalClicks, clicksInRange, lastAccessedAt, daily: [{date, clicks}], expiresAt, expired}`.
 
 **Content negotiation rule (D70):** management API mappings declare `produces = application/json` (class-level on `ShortUrlController`, never `application/problem+json`); the redirect never does. Every `/api/v1/urls` operation therefore also returns 406 for an `Accept` that excludes `application/json`, DELETE included. The 406 is decided at mapping lookup, before the body is read or the service runs, so a rejected request never creates or changes anything. Precedence and the unparseable-`Accept` deviation are under *Error handling*.
 

@@ -1,6 +1,6 @@
 # Requirements
 
-Last updated: 2026-09-30 (US-014 G2, D129–D131). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
+Last updated: 2026-09-30 (final, US-015; D1–D131). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
 
 ## Functional requirements
 

@@ -1,7 +1,7 @@
 ---
 id: US-015
 title: Final documentation
-status: In Progress
+status: Done
 plan_task: 14
 depends_on: [US-001, US-002, US-003, US-004, US-005, US-006, US-007, US-008, US-009, US-010, US-011, US-012, US-013, US-014, US-016]
 requirements: [FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10, FR-11, FR-12, FR-13, D22]
@@ -43,6 +43,14 @@ This story is docs-only: it has no Cucumber scenarios or `*IT` tests, since no c
 - **D71:** an idempotency key for create (also in US-014's carry-over).
 - **Abuse:** screening of target URLs at create, abuse takedown, and rate limits (US-008 design, open-redirect considerations).
 - **D22:** upgrade to Spring Boot 4.x.
+
+## Resolution
+Written by the main session (no agents; the engineer approved at US-014 G3 that the main session writes US-015 and the engineer reviews it):
+- `README.md` rewritten: features, prerequisites, Docker Compose quick start, tests, API with `curl` examples, error format, configuration with environment-variable names, how the project was built, and a docs index (AC1).
+- `docs/architecture.md`: the "planned" markers removed; a current overview, package structure and REST API table (AC2).
+- `docs/scenarios.md` and `docs/requirements.md`: final status markers (AC2).
+- `docs/engineering-summary.md` written: what was built, trade-offs, known limitations (including D22), production roadmap (the US-014 tier B), and how AI was used, cross-referencing the AI usage log (AC3).
+- No source code changed (AC4).
 
 ## Design note
 *(architect)*

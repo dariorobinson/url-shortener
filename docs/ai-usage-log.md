@@ -1147,3 +1147,11 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
 - **Validation:** `./mvnw -o clean verify` exit 0 (Surefire 1181/0, Failsafe 924/0; LINE coverage 98.50%), plus a manual `docker compose up --build` of the full stack in an isolated Compose project, smoke-tested end to end and then removed.
 - **Engineer decision:** "approve all" (G3): US-014 is `Done`, including the H6 deviation (discovery kept, ADMIN-only); committed as C9 and pushed; US-015 is written by the main session and reviewed by the engineer.
 - **Rationale:** *(engineer to add)*
+
+## Entry 38 — US-015 final documentation
+
+- **Date:** 2026-09-30
+- **Task:** Bring every document up to date for reviewers (US-015).
+- **AI work (main session, no agents):** rewrote the README (quick start, tests, API with `curl` examples, configuration, process); replaced the planned/designed markers in `architecture.md` with a current overview, package structure and API table; finalised the scenario and requirement statuses; wrote `engineering-summary.md`, including where the engineer overrode AI recommendations and where the process caught AI mistakes.
+- **Engineer decision:** "approve all": US-015 is `Done`; committed as C10 and pushed. The engineer will add the outstanding "(engineer to add)" rationales later.
+- **Validation:** no code changed; endpoints, variable names and defaults in the README were checked against `application.yml`, `.env.example`, the properties classes and the live Compose smoke test of US-014.
