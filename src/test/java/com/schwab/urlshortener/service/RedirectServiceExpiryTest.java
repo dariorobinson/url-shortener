@@ -17,6 +17,7 @@ import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Optional;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -25,6 +26,8 @@ import org.springframework.transaction.TransactionStatus;
 
 /** US-016: the redirect's expiry check (AC3, AC4, AC8; D109, D111, D113, D117, D119). */
 class RedirectServiceExpiryTest {
+
+    private final SimpleMeterRegistry meters = new SimpleMeterRegistry();
 
     private static final Instant CREATED = Instant.parse("2026-09-01T00:00:00Z");
     private static final Instant EXPIRY = Instant.parse("2026-09-30T12:00:00Z");
@@ -38,7 +41,7 @@ class RedirectServiceExpiryTest {
 
     @BeforeEach
     void setUp() {
-        service = new RedirectService(repository, transactionManager, clickRecorder, clock);
+        service = new RedirectService(repository, transactionManager, clickRecorder, clock, meters);
         when(transactionManager.getTransaction(any())).thenReturn(mock(TransactionStatus.class));
     }
 

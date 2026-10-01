@@ -13,6 +13,7 @@ import io.cucumber.java.en.When;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -57,7 +58,7 @@ public class RedirectSteps {
     private static Map<String, List<String>> headersExceptDate(HttpResponse<String> served) {
         Map<String, List<String>> headers = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         served.headers().map().forEach((name, values) -> {
-            if (!"date".equalsIgnoreCase(name)) {
+            if (!ApiClient.PER_REQUEST_HEADERS.contains(name.toLowerCase(Locale.ROOT))) {
                 headers.put(name, values);
             }
         });

@@ -143,3 +143,7 @@ Any further Done-story test edit found during implementation is listed the same 
 ## Review log
 | Round | ID | Severity | Finding | Resolution |
 |---|---|---|---|---|
+
+## Post-completion change (engineer-approved at the US-014 G2; D129–D131; main session, US-014)
+
+- `RedirectServiceExpiryTest` — **updated**: `setUp` passes a `SimpleMeterRegistry` to the `RedirectService` constructor (H13).

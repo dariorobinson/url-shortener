@@ -16,5 +16,31 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+  # US-014 AC4: the application, started once PostgreSQL is healthy. Credentials and users come from .env.
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      APP_BASE_URL: ${APP_BASE_URL:?set APP_BASE_URL in .env}
+      APP_SECURITY_USERS_0_USERNAME: ${APP_SECURITY_USERS_0_USERNAME:?set APP_SECURITY_USERS_0_USERNAME in .env}
+      APP_SECURITY_USERS_0_PASSWORD_HASH: ${APP_SECURITY_USERS_0_PASSWORD_HASH:?set APP_SECURITY_USERS_0_PASSWORD_HASH in .env}
+      APP_SECURITY_USERS_0_ROLE: ${APP_SECURITY_USERS_0_ROLE:?set APP_SECURITY_USERS_0_ROLE in .env}
+      APP_SECURITY_USERS_1_USERNAME: ${APP_SECURITY_USERS_1_USERNAME:?set APP_SECURITY_USERS_1_USERNAME in .env}
+      APP_SECURITY_USERS_1_PASSWORD_HASH: ${APP_SECURITY_USERS_1_PASSWORD_HASH:?set APP_SECURITY_USERS_1_PASSWORD_HASH in .env}
+      APP_SECURITY_USERS_1_ROLE: ${APP_SECURITY_USERS_1_ROLE:?set APP_SECURITY_USERS_1_ROLE in .env}
+    ports:
+      - "127.0.0.1:8080:8080"          # loopback only
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
 volumes:
   pgdata:

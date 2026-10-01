@@ -53,11 +53,24 @@ public final class ShortUrlTestData {
     }
 
     /** Removes either injected failure; safe to call when none exists. */
+    /**
+     * US-014: makes every short_url INSERT fail with a raw PostgreSQL error, so create answers a 500. Dropped by
+     * {@link #dropClickFailures()} with the other injected failures.
+     */
+    public void failShortUrlInserts() {
+        jdbc.execute("CREATE FUNCTION test_fail_short_url_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN"
+                + " RAISE EXCEPTION 'injected short_url failure'; END $$");
+        jdbc.execute("CREATE TRIGGER test_fail_short_url BEFORE INSERT ON short_url FOR EACH ROW"
+                + " EXECUTE FUNCTION test_fail_short_url_insert()");
+    }
+
     public void dropClickFailures() {
         jdbc.execute("DROP TRIGGER IF EXISTS test_fail_click ON click_event");
         jdbc.execute("DROP TRIGGER IF EXISTS test_fail_click ON short_url");
         jdbc.execute("DROP FUNCTION IF EXISTS test_fail_click_insert()");
         jdbc.execute("DROP FUNCTION IF EXISTS test_fail_click_update()");
+        jdbc.execute("DROP TRIGGER IF EXISTS test_fail_short_url ON short_url");
+        jdbc.execute("DROP FUNCTION IF EXISTS test_fail_short_url_insert()");
     }
 
     public void seed(String code, String status) {

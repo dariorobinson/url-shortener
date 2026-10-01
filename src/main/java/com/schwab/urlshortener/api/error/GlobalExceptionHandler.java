@@ -82,6 +82,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         texts.put(ErrorCode.NOT_ACCEPTABLE, "The requested response format is not supported.");
         texts.put(ErrorCode.UNSUPPORTED_MEDIA_TYPE, "The request content type is not supported.");
         texts.put(ErrorCode.SHORT_URL_EXPIRED, "The short URL has expired.");
+        texts.put(ErrorCode.PAYLOAD_TOO_LARGE, "The request body is too large.");
         texts.put(ErrorCode.INTERNAL_ERROR, "An unexpected error occurred.");
         return texts;
     }
@@ -104,6 +105,13 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @Override
     protected ResponseEntity<Object> handleHttpMessageNotReadable(HttpMessageNotReadableException ex,
             HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+        // D130: a chunked body that ran past the limit while being parsed.
+        if (causedByOversizedBody(ex)) {
+            ProblemDetail tooLarge = ProblemDetails.of(ErrorCode.PAYLOAD_TOO_LARGE,
+                    DETAIL.get(ErrorCode.PAYLOAD_TOO_LARGE), path(request));
+            return super.handleExceptionInternal(ex, tooLarge, headers, ErrorCode.PAYLOAD_TOO_LARGE.status(),
+                    request);
+        }
         // Never the parser's message, location or class name.
         ProblemDetail body = ProblemDetails.of(ErrorCode.MALFORMED_REQUEST,
                 DETAIL.get(ErrorCode.MALFORMED_REQUEST), path(request));
@@ -127,11 +135,22 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return super.handleExceptionInternal(ex, replacement, headers, code.status(), request);
     }
 
-    private static ErrorCode codeFor(HttpStatusCode status) {
+    private static boolean causedByOversizedBody(Throwable ex) {
+        for (Throwable cause = ex; cause != null; cause = cause.getCause()) {
+            if (cause instanceof PayloadTooLargeException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Also used by {@link ProblemErrorController} for forwarded errors. */
+    static ErrorCode codeFor(HttpStatusCode status) {
         return switch (status.value()) {
             case 404 -> ErrorCode.RESOURCE_NOT_FOUND;
             case 405 -> ErrorCode.METHOD_NOT_ALLOWED;
             case 406 -> ErrorCode.NOT_ACCEPTABLE;
+            case 413 -> ErrorCode.PAYLOAD_TOO_LARGE;
             case 415 -> ErrorCode.UNSUPPORTED_MEDIA_TYPE;
             default -> status.is5xxServerError() ? ErrorCode.INTERNAL_ERROR : ErrorCode.MALFORMED_REQUEST;
         };
@@ -248,6 +267,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         }
         log.error("Unhandled exception: method={} path={}", request.getMethod(), request.getRequestURI(), ex);
         return respond(plain(ErrorCode.INTERNAL_ERROR, request));
+    }
+
+    /** The generic, non-leaking detail text for a code; shared with {@link ProblemErrorController}. */
+    static String detailFor(ErrorCode code) {
+        return DETAIL.get(code);
     }
 
     private static ProblemDetail plain(ErrorCode code, HttpServletRequest request) {

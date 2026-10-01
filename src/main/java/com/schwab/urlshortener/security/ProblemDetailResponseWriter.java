@@ -8,15 +8,16 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 
 /**
- * Writes a {@link ProblemDetail} outside Spring MVC. It must use the context's {@link ObjectMapper}:
+ * Writes a {@link ProblemDetail} outside Spring MVC (the security handlers and the servlet filters). It must use
+ * the context's {@link ObjectMapper}:
  * only that one carries the mixin that renders {@code errorCode} as a top-level field.
  */
 @RequiredArgsConstructor
-class ProblemDetailResponseWriter {
+public class ProblemDetailResponseWriter {
 
     private final ObjectMapper objectMapper;
 
-    void write(HttpServletResponse response, ProblemDetail problem) throws IOException {
+    public void write(HttpServletResponse response, ProblemDetail problem) throws IOException {
         response.setStatus(problem.getStatus());
         response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
         response.getOutputStream().write(objectMapper.writeValueAsBytes(problem));

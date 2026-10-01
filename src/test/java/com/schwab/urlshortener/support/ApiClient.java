@@ -29,7 +29,13 @@ public final class ApiClient {
 
     private static final HttpClient HTTP = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
     private static final Set<String> FRAMING_AND_DATE_HEADERS =
-            Set.of("date", "content-length", "transfer-encoding", "connection");
+            Set.of("date", "content-length", "transfer-encoding", "connection", "x-request-id");
+
+    /**
+     * Headers that differ on every response by design: the date and the request ID (US-014 AC1). Header-equality
+     * comparisons ignore them; tests of the request ID itself assert it separately.
+     */
+    public static final Set<String> PER_REQUEST_HEADERS = Set.of("date", "x-request-id");
 
     private final int port;
     private final ObjectMapper mapper;
@@ -134,7 +140,8 @@ public final class ApiClient {
     public static Map<String, List<String>> stableHeaders(HttpResponse<String> response) {
         Map<String, List<String>> headers = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         response.headers().map().forEach((name, values) -> {
-            if (!"date".equalsIgnoreCase(name) && !"content-length".equalsIgnoreCase(name)) {
+            String lower = name.toLowerCase(Locale.ROOT);
+            if (!PER_REQUEST_HEADERS.contains(lower) && !"content-length".equals(lower)) {
                 headers.put(name, values);
             }
         });

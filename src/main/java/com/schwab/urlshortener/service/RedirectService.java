@@ -8,6 +8,8 @@ import com.schwab.urlshortener.repository.ShortUrlRepository;
 import com.schwab.urlshortener.service.exception.ShortUrlExpiredException;
 import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
 import com.schwab.urlshortener.shortcode.ShortCodeFormat;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
 import lombok.extern.slf4j.Slf4j;
@@ -33,17 +35,25 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 public class RedirectService {
 
+    /** US-014 H13: counts fail-open click losses; readable by ADMIN at /actuator/metrics/shortener.clicks.lost. */
+    public static final String LOST_CLICKS_METRIC = "shortener.clicks.lost";
+
     private final ShortUrlRepository repository;
     private final TransactionTemplate readOnly;
     private final ClickRecorder clickRecorder;
     private final Clock clock;
+    private final Counter lostClicks;
+
 
     /** The resolved link: the id for the recorder and the stored target. The entity never leaves this class. */
     private record Resolved(long id, String target) {
     }
 
     public RedirectService(ShortUrlRepository repository, PlatformTransactionManager transactionManager,
-            ClickRecorder clickRecorder, Clock clock) {
+            ClickRecorder clickRecorder, Clock clock, MeterRegistry meterRegistry) {
+        this.lostClicks = Counter.builder(LOST_CLICKS_METRIC)
+                .description("Clicks not recorded because recording failed; the redirect still succeeded (D12, D93)")
+                .register(meterRegistry);
         this.repository = repository;
         this.clickRecorder = clickRecorder;
         this.clock = clock;
@@ -78,6 +88,7 @@ public class RedirectService {
         try {
             clickRecorder.record(link.id(), now);
         } catch (RuntimeException e) {
+            lostClicks.increment();
             log.warn("Click not recorded: code={} id={} exception={} sqlState={}", code, link.id(),
                     e.getClass().getSimpleName(), PostgresServerErrors.sqlState(e).orElse("none"));
         }

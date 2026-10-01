@@ -950,3 +950,10 @@ Round 2:
 - `OpenApiDocsIT.shouldDescribeCreateRequestBodyWithOriginalUrlRequiredAndAliasOptional` — **renamed** to `shouldDescribeCreateRequestBodyWithOriginalUrlRequiredAndAliasAndExpiresAtOptional` and **updated**: `expiresAt` property (date-time), not required.
 - `OpenApiDocsIT.shouldDescribe201AsJsonOnlyWithTheEightFieldResourceAndLocationHeader` — **renamed** to `shouldDescribe201AsJsonOnlyWithTheTenFieldResourceAndLocationHeader` and **updated**.
 - `ShortUrlServiceTest.serviceWithMaxAttempts` (helper) and three direct constructions — **updated**: the constructor takes an `ExpirationPolicy`.
+
+## Post-completion change (engineer-approved at the US-014 G2; D129–D131; main session, US-014)
+
+- `ErrorCodeTest.shouldContainExactlyTheD31D61AndD109CatalogueInOrder` — **renamed** to `shouldContainExactlyTheD31D61D109AndD130CatalogueInOrder` and **updated**: `PAYLOAD_TOO_LARGE` appended.
+- `ErrorCodeTest.shouldMapEachCodeToItsFixedHttpStatus` — **updated**: `PAYLOAD_TOO_LARGE` → 413.
+- `ApiClient` (shared support) — **updated**: `stableHeaders` and `headersExceptFraming` ignore `X-Request-Id`, which differs on every response by design; new constant `PER_REQUEST_HEADERS` (`date`, `x-request-id`) is the single list.
+- `ShortUrlTestData` (shared support) — **added** `failShortUrlInserts()`; `dropClickFailures()` now also drops it, so the trigger's DDL and cleanup stay defined once.

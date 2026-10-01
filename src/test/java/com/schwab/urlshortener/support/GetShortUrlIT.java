@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -95,7 +96,7 @@ class GetShortUrlIT extends IntegrationTestBase {
     private static Map<String, List<String>> headersExceptDate(HttpResponse<String> response) {
         Map<String, List<String>> headers = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         response.headers().map().forEach((name, values) -> {
-            if (!"date".equalsIgnoreCase(name)) {
+            if (!ApiClient.PER_REQUEST_HEADERS.contains(name.toLowerCase(Locale.ROOT))) {
                 headers.put(name, values);
             }
         });

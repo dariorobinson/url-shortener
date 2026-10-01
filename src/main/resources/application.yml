@@ -20,10 +20,15 @@ spring:
       strict-duplicate-detection: true
   datasource:
     hikari:
+      # D131: fail fast when the pool is exhausted (was Hikari's 30 s default), so a redirect does not hang.
+      connection-timeout: 3000
       data-source-properties:
         # D64: no row values (URLs, usernames) in pgjdbc exception messages or logs.
         logServerErrorDetail: false
 server:
+  # US-014 H5 (D37): trust X-Forwarded-For/-Proto only from internal proxies (Tomcat's default: private and
+  # loopback ranges). Override with SERVER_TOMCAT_REMOTEIP_INTERNALPROXIES for the real load balancer.
+  forward-headers-strategy: native
   error:
     include-stacktrace: never
     include-message: never
@@ -32,13 +37,20 @@ server:
 management:
   endpoints:
     web:
+      # US-014 H6: every endpoint but health, and the /actuator links page itself, is ADMIN-only in SecurityConfig.
+      # Discovery stays enabled on purpose: with it disabled, an ADMIN's GET /actuator would fall through to the
+      # public /{code} redirect mapping.
       exposure:
-        include: health
+        # H13: metrics carries shortener.clicks.lost (ADMIN-only).
+        include: health, metrics
   endpoint:
     health:
       show-details: never
       show-components: never
 logging:
+  pattern:
+    # US-014 AC1: every log line carries the request ID (blank outside a request).
+    level: "%5p [requestId=%X{requestId:-}]"
   level:
     # D64: expected unique violations are handled and logged by the service; this also keeps the
     # server's "Failing row contains" detail out of the logs.

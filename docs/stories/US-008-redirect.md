@@ -740,3 +740,12 @@ Final:
 ## Post-completion change (engineer-approved at the US-016 G2; D106–D127; main session, US-016)
 
 - `OpenApiDocsIT.shouldDocumentExactlyThe302And404ResponsesWithNoImplicit200` — **renamed** to `shouldDocumentExactlyThe302404And410ResponsesWithNoImplicit200` and **updated**: the 410 response is documented as problem+json.
+
+## Post-completion change (engineer-approved at the US-014 G2; D129–D131; main session, US-014)
+
+- `RedirectIT.shouldRecordTheTrailingSlashBehaviourAs401AnonymousAnd403Authenticated` — **removed** and **replaced** by `shouldReturn404ResourceNotFoundWithoutALoginPromptForTheTrailingSlashVariant` (D80, US-014 H8).
+- `RedirectIT.shouldRouteInfrastructurePathsToTheirOwnHandlersForAnonymousAndAuthenticatedCallers` — **updated**: direct `GET /error` is 404 `RESOURCE_NOT_FOUND`, no longer 500 (D82, H9).
+- `RedirectIT.shouldRefuseAnonymousReservedPrefixesAndSendAuthenticatedApiToTheRedirectNotFound` — **updated**: a USER's `GET /actuator` is 403 `ACCESS_DENIED`; an ADMIN still gets the links page (H6).
+- `RedirectIT.shouldGiveHeadTheRecordedStatusOnEveryRoutingPath` — **updated** rows: `/error` 404/404 (H9), `/actuator/health` 200/200 (H7), `/actuator` 401/403 (H6); `/error` 404s assert `RESOURCE_NOT_FOUND`.
+- `RedirectIT.headersExceptDate` and `RedirectSteps.headersExceptDate` (helpers) — **updated**: also ignore `X-Request-Id`.
+- `RedirectServiceTest` — **updated**: the `RedirectService` constructor takes a `MeterRegistry` (H13) in `setUp`, `shouldNeverTouchTheRecorderAndReadTheClockOnceWhenResolvingWithoutRecording` and `shouldFailTheRedirectWithoutRecordingOrLoggingTheUrlWhenTheClockFails`; a `SimpleMeterRegistry` field was added.

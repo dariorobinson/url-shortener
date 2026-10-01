@@ -13,7 +13,9 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -126,7 +128,7 @@ class RedirectIT extends IntegrationTestBase {
     private static Map<String, List<String>> headersExceptDate(HttpResponse<String> response) {
         Map<String, List<String>> headers = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         response.headers().map().forEach((name, values) -> {
-            if (!"date".equalsIgnoreCase(name)) {
+            if (!ApiClient.PER_REQUEST_HEADERS.contains(name.toLowerCase(Locale.ROOT))) {
                 headers.put(name, values);
             }
         });
@@ -569,9 +571,10 @@ class RedirectIT extends IntegrationTestBase {
     @Test
     void shouldRouteInfrastructurePathsToTheirOwnHandlersForAnonymousAndAuthenticatedCallers() throws Exception {
         for (String user : new String[] {null, TestUsers.ALICE}) {
+            // D82, US-014 H9: a direct /error has nothing to report, so it is a 404 problem, never a 500.
             HttpResponse<String> error = callAs("GET", "/error", user);
-            assertThat(error.statusCode()).as("GET /error as %s", user).isEqualTo(500);
-            assertThat(json(error).has("errorCode")).isFalse();
+            assertThat(error.statusCode()).as("GET /error as %s", user).isEqualTo(404);
+            assertThat(json(error).path("errorCode").asText()).isEqualTo("RESOURCE_NOT_FOUND");
 
             HttpResponse<String> welcome = callAs("GET", "/swagger-ui.html", user);
             assertThat(welcome.statusCode()).isEqualTo(302);
@@ -608,11 +611,15 @@ class RedirectIT extends IntegrationTestBase {
         // D78: an authenticated bare /api reaches the redirect mapping and is a 404, never a 302.
         assertNotFound(callAs("GET", "/api", TestUsers.ALICE), "/api");
 
-        // Recorded: an authenticated /actuator is served by Actuator's own links mapping (200), never the redirect.
-        HttpResponse<String> authenticatedActuator = callAs("GET", "/actuator", TestUsers.ALICE);
-        assertThat(authenticatedActuator.statusCode()).isEqualTo(200);
-        assertThat(authenticatedActuator.headers().firstValue("Location")).isEmpty();
-        assertThat(ApiClient.contentType(authenticatedActuator)).contains("actuator");
+        // US-014 H6: /actuator is ADMIN-only. A USER is refused; an ADMIN gets Actuator's own links page, never the
+        // redirect mapping.
+        HttpResponse<String> userActuator = callAs("GET", "/actuator", TestUsers.ALICE);
+        assertThat(userActuator.statusCode()).isEqualTo(403);
+        assertThat(json(userActuator).path("errorCode").asText()).isEqualTo("ACCESS_DENIED");
+        HttpResponse<String> adminActuator = callAs("GET", "/actuator", TestUsers.ADMIN);
+        assertThat(adminActuator.statusCode()).isEqualTo(200);
+        assertThat(adminActuator.headers().firstValue("Location")).isEmpty();
+        assertThat(ApiClient.contentType(adminActuator)).contains("actuator");
     }
 
     @Test
@@ -633,7 +640,7 @@ class RedirectIT extends IntegrationTestBase {
         data.seed(ACTIVE_CODE, "ACTIVE", "https://example.com/routing-control");
         assertRedirectsTo(call("HEAD", "/" + ACTIVE_CODE), "https://example.com/routing-control");
         Map<String, int[]> expected = new TreeMap<>();
-        expected.put("/error", new int[] {500, 500});
+        expected.put("/error", new int[] {404, 404});                  // D82, US-014 H9
         expected.put("/swagger-ui.html", new int[] {302, 302});
         expected.put("/api", new int[] {401, 404});
         expected.put("/favicon.ico", new int[] {404, 404});
@@ -645,8 +652,8 @@ class RedirectIT extends IntegrationTestBase {
         expected.put("/v3/api-docs", new int[] {401, 403});
         expected.put("/v3/api-docs/swagger-config", new int[] {401, 403});
         expected.put("/swagger-ui/index.html", new int[] {401, 403});
-        expected.put("/actuator/health", new int[] {401, 200});
-        expected.put("/actuator", new int[] {401, 200});
+        expected.put("/actuator/health", new int[] {200, 200});        // US-014 H7: HEAD probes are public
+        expected.put("/actuator", new int[] {401, 403});               // US-014 H6: ADMIN-only
 
         for (Map.Entry<String, int[]> entry : expected.entrySet()) {
             String path = entry.getKey();
@@ -659,14 +666,14 @@ class RedirectIT extends IntegrationTestBase {
             assertThat(anonymous.body()).isEmpty();
             // Every 404 row also names its cause through GET on the same path (a HEAD has no body).
             if (statuses[1] == 404) {
-                String errorCode = "/".equals(path) ? "RESOURCE_NOT_FOUND" : NOT_FOUND;
+                String errorCode = "/".equals(path) || "/error".equals(path) ? "RESOURCE_NOT_FOUND" : NOT_FOUND;
                 HttpResponse<String> get = callAs("GET", path, TestUsers.ALICE);
                 assertThat(get.statusCode()).as("alice GET %s", path).isEqualTo(404);
                 assertThat(json(get).path("errorCode").asText()).as("errorCode of GET %s", path)
                         .isEqualTo(errorCode);
             }
             if (statuses[0] == 404) {
-                String errorCode = "/".equals(path) ? "RESOURCE_NOT_FOUND" : NOT_FOUND;
+                String errorCode = "/".equals(path) || "/error".equals(path) ? "RESOURCE_NOT_FOUND" : NOT_FOUND;
                 HttpResponse<String> get = call("GET", path);
                 assertThat(get.statusCode()).as("anonymous GET %s", path).isEqualTo(404);
                 assertThat(json(get).path("errorCode").asText()).as("errorCode of GET %s", path)
@@ -722,20 +729,22 @@ class RedirectIT extends IntegrationTestBase {
     // ---- D80: trailing slash ----
 
     @Test
-    void shouldRecordTheTrailingSlashBehaviourAs401AnonymousAnd403Authenticated() throws Exception {
+    void shouldReturn404ResourceNotFoundWithoutALoginPromptForTheTrailingSlashVariant() throws Exception {
+        // D80, US-014 H8: /{code}/ reaches MVC (no handler) instead of a 401 Basic challenge that browsers prompt for.
         data.seed(ACTIVE_CODE, "ACTIVE", "https://example.com/slash");
         assertRedirectsTo(call("GET", "/" + ACTIVE_CODE), "https://example.com/slash");
 
         for (String method : List.of("GET", "HEAD")) {
-            HttpResponse<String> anonymous = call(method, "/" + ACTIVE_CODE + "/");
-            assertThat(anonymous.statusCode()).as("anonymous %s", method).isEqualTo(401);
-            assertThat(anonymous.headers().firstValue("WWW-Authenticate")).hasValueSatisfying(
-                    challenge -> assertThat(challenge).startsWith("Basic"));
-            assertThat(anonymous.headers().firstValue("Location")).isEmpty();
-
-            HttpResponse<String> authenticated = callAs(method, "/" + ACTIVE_CODE + "/", TestUsers.ALICE);
-            assertThat(authenticated.statusCode()).as("authenticated %s", method).isEqualTo(403);
-            assertThat(authenticated.headers().firstValue("Location")).isEmpty();
+            for (String user : Arrays.asList(null, TestUsers.ALICE)) {
+                HttpResponse<String> response = user == null ? call(method, "/" + ACTIVE_CODE + "/")
+                        : callAs(method, "/" + ACTIVE_CODE + "/", user);
+                assertThat(response.statusCode()).as("%s %s", user, method).isEqualTo(404);
+                assertThat(response.headers().firstValue("WWW-Authenticate")).isEmpty();
+                assertThat(response.headers().firstValue("Location")).isEmpty();
+                if ("GET".equals(method)) {
+                    assertThat(api.json(response).path("errorCode").asText()).isEqualTo("RESOURCE_NOT_FOUND");
+                }
+            }
         }
     }
 

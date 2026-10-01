@@ -10,14 +10,14 @@ import org.springframework.http.HttpStatus;
 class ErrorCodeTest {
 
     @Test
-    void shouldContainExactlyTheD31D61AndD109CatalogueInOrder() {
+    void shouldContainExactlyTheD31D61D109AndD130CatalogueInOrder() {
         assertThat(Arrays.stream(ErrorCode.values()).map(Enum::name)).containsExactly(
                 "VALIDATION_FAILED", "MALFORMED_REQUEST", "INVALID_URL", "INVALID_ALIAS",
                 "ALIAS_ALREADY_EXISTS", "SHORT_URL_NOT_FOUND", "SHORT_URL_ALREADY_DEACTIVATED",
                 "SHORT_URL_ALREADY_ACTIVE", "CONCURRENT_MODIFICATION", "SHORT_CODE_UNAVAILABLE",
                 "AUTHENTICATION_REQUIRED", "ACCESS_DENIED", "INTERNAL_ERROR",
                 "RESOURCE_NOT_FOUND", "METHOD_NOT_ALLOWED", "NOT_ACCEPTABLE", "UNSUPPORTED_MEDIA_TYPE",
-                "SHORT_URL_EXPIRED");
+                "SHORT_URL_EXPIRED", "PAYLOAD_TOO_LARGE");
     }
 
     @Test
@@ -40,5 +40,6 @@ class ErrorCodeTest {
         assertThat(ErrorCode.NOT_ACCEPTABLE.status()).isEqualTo(HttpStatus.NOT_ACCEPTABLE);
         assertThat(ErrorCode.UNSUPPORTED_MEDIA_TYPE.status()).isEqualTo(HttpStatus.UNSUPPORTED_MEDIA_TYPE);
         assertThat(ErrorCode.SHORT_URL_EXPIRED.status()).isEqualTo(HttpStatus.GONE);
+        assertThat(ErrorCode.PAYLOAD_TOO_LARGE.status()).isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE);
     }
 }

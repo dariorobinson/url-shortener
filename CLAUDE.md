@@ -29,8 +29,8 @@ Base package: `com.schwab.urlshortener`. `JAVA_HOME` must point to JDK 25.
 ## Commands
 
 - Build and all tests: `./mvnw -q verify`
-- Start the database: `docker compose up -d` (the app service is added to Compose in US-014)
-- Run the app locally: `./mvnw spring-boot:run -Dspring-boot.run.profiles=local`
+- Run the full stack (app + PostgreSQL): `docker compose up -d --build` (needs a `.env` copied from `.env.example`)
+- Or start only the database (`docker compose up -d postgres`) and run the app with `./mvnw spring-boot:run -Dspring-boot.run.profiles=local`
 
 ## Code conventions
 

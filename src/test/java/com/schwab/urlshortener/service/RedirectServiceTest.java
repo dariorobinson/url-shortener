@@ -32,6 +32,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -56,6 +57,8 @@ import org.springframework.transaction.annotation.Transactional;
  */
 class RedirectServiceTest {
 
+    private final SimpleMeterRegistry meters = new SimpleMeterRegistry();
+
     private static final String URL_MARKER = "https://secret-host.example/private?token=marker";
     private static final Instant AT = Instant.parse("2026-09-29T14:03:12.123456Z");
     /** The click time: distinct from every fixture timestamp, so a wrong source of time cannot pass. */
@@ -75,7 +78,7 @@ class RedirectServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new RedirectService(repository, transactionManager, clickRecorder, clock);
+        service = new RedirectService(repository, transactionManager, clickRecorder, clock, meters);
         when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
         originalLevel = serviceLogger.getLevel();
         serviceLogger.setLevel(Level.DEBUG);
@@ -280,7 +283,8 @@ class RedirectServiceTest {
         // D111: HEAD must decide expiry, so it reads the clock (once); it still never records (D18).
         Clock headClock = mock(Clock.class);
         when(headClock.instant()).thenReturn(CLICK_AT);
-        RedirectService headService = new RedirectService(repository, transactionManager, clickRecorder, headClock);
+        RedirectService headService = new RedirectService(repository, transactionManager, clickRecorder, headClock,
+                meters);
         stored("abc1234", "https://example.com/x", ShortUrlStatus.ACTIVE);
 
         assertThat(headService.resolve("abc1234")).isEqualTo("https://example.com/x");
@@ -389,7 +393,8 @@ class RedirectServiceTest {
         // clock is read before the lookup; nothing is recorded and the URL never reaches the log.
         Clock failingClock = mock(Clock.class);
         when(failingClock.instant()).thenThrow(new IllegalStateException("clock broken " + URL_MARKER));
-        RedirectService failing = new RedirectService(repository, transactionManager, clickRecorder, failingClock);
+        RedirectService failing = new RedirectService(repository, transactionManager, clickRecorder, failingClock,
+                meters);
         stored("abc1234", URL_MARKER, ShortUrlStatus.ACTIVE);
 
         assertThatThrownBy(() -> failing.resolveAndRecordClick("abc1234")).isInstanceOf(IllegalStateException.class);

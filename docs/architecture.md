@@ -412,6 +412,17 @@ The full detail is in the US-011 Design note. There is no migration, and `Securi
 - **Representation:** create, details, PATCH and stats responses end with `expiresAt` (`null` = never) and `expired` (computed at the request's instant, D118). Expired links remain visible to owner and ADMIN, with their stats (D117).
 - **Unchanged:** `SecurityConfig` (no new endpoint), `ShortUrlStatus`, the stats query, and the 302 response.
 
+### Production hardening — *implemented (US-014)*; D129–D131
+
+- **Request ID (AC1):** `RequestIdFilter` (first servlet filter, also on the error dispatch) accepts `X-Request-Id` only if it matches `^[A-Za-z0-9-]{1,64}$`, else generates a UUID; it is in the MDC as `requestId` (log pattern `[requestId=…]`), in the `X-Request-Id` response header, and in 500 problem bodies only.
+- **Security headers (AC2):** Spring Security's defaults (`nosniff`, `X-Frame-Options: DENY`) are pinned by tests.
+- **Container (AC3, AC4):** multi-stage `Dockerfile` (JDK build stage, JRE Alpine runtime, non-root `app` user, GET health check); the Compose `app` service waits for a healthy PostgreSQL and listens on loopback only.
+- **HSTS behind the load balancer (AC6, D37):** `server.forward-headers-strategy=native`; `X-Forwarded-Proto` is trusted only from Tomcat's internal proxies (private and loopback ranges by default; set `SERVER_TOMCAT_REMOTEIP_INTERNALPROXIES` to the real load balancer).
+- **Filter-chain changes:** anonymous `HEAD /actuator/health`; every other actuator path, including the links page, ADMIN-only; `GET`/`HEAD /{segment}/` admitted so it is a 404 rather than a Basic challenge (D80).
+- **Errors:** `ProblemErrorController` replaces Boot's `/error`: forwarded errors become catalogue problems, direct `/error` is 404 (D82). Tomcat's own error pages show no report or version.
+- **Limits:** request bodies over 16 KiB → `413 PAYLOAD_TOO_LARGE`, before authentication (D130); Hikari connection timeout 3 s (D131).
+- **Metric:** `shortener.clicks.lost` counts fail-open click losses, at `/actuator/metrics` (ADMIN).
+
 ### Access rules in the filter chain — *implemented (US-005)*
 
 The rules below are evaluated top to bottom, and the first match wins. The exact configuration is in the US-005 Design note §3.

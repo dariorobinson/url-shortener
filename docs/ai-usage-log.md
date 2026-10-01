@@ -1134,3 +1134,16 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
 - **Engineer decision:** "approve all" (G3): US-016 is `Done`; the clock-failure behaviour is accepted as **D128** (fail the redirect rather than skip the expiry check); committed as C8 and pushed.
 - **Rationale:** *(engineer to add)*
 - **Validation:** `./mvnw -o clean verify` exit 0; Surefire 1140/0, Failsafe 904/0; LINE coverage 750/755.
+
+## Entry 37 — US-014 production hardening (design, implementation, G3)
+
+- **Date:** 2026-09-30
+- **Design (G2):** the main session split 18 items into tier A (H1–H13, built here) and tier B (production roadmap). The engineer approved ("approve all") as D129–D131 (scope, the 16 KiB body limit, the 3 s pool timeout).
+- **Implementation (main session, no agents):** request-ID filter (allow-listed header, MDC, response header, 500 body); body-limit filter (declared and chunked); `ProblemErrorController`; filter-chain rules for actuator, HEAD health and trailing slash; Tomcat error-page valve; native forwarded headers; Hikari timeout; lost-click metric; multi-stage Dockerfile; Compose `app` service.
+- **Issues found while implementing (self-caught):**
+  - Two package cycles between `api.error` and the new `web` package, first through the MDC key and then through the overrun exception. Both were resolved so that `web` depends on `api.error` only.
+  - Disabling actuator discovery as designed would let an ADMIN's `GET /actuator` fall through to the public redirect. Discovery was kept, ADMIN-only (a deviation, flagged at G3).
+  - Every header-equality test broke on the new per-request `X-Request-Id`. It is now excluded through one shared list in `ApiClient`.
+- **Validation:** `./mvnw -o clean verify` exit 0 (Surefire 1181/0, Failsafe 924/0; LINE coverage 98.50%), plus a manual `docker compose up --build` of the full stack in an isolated Compose project, smoke-tested end to end and then removed.
+- **Engineer decision:** "approve all" (G3): US-014 is `Done`, including the H6 deviation (discovery kept, ADMIN-only); committed as C9 and pushed; US-015 is written by the main session and reviewed by the engineer.
+- **Rationale:** *(engineer to add)*

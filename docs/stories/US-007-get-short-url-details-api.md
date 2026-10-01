@@ -701,3 +701,7 @@ Round 2:
 - `ShortUrlControllerWebMvcTest.shouldReturn200WithTheExactEightFieldResourceAndANullLastAccessedAt` — **renamed** to `shouldReturn200WithTheExactTenFieldResourceAndANullLastAccessedAt`.
 - `GetShortUrlIT` and `GetShortUrlSteps` — **updated** class-level `RESOURCE_KEYS` (two added keys).
 - `OpenApiDocsIT.shouldDocumentGet200AsJsonOnlyWithTheSameEightPropertiesAsCreate` — **renamed** to `shouldDocumentGet200AsJsonOnlyWithTheSameTenPropertiesAsCreate` and **updated**.
+
+## Post-completion change (engineer-approved at the US-014 G2; D129–D131; main session, US-014)
+
+- `GetShortUrlIT.headersExceptDate` (helper) — **updated**: also ignores `X-Request-Id`, via `ApiClient.PER_REQUEST_HEADERS`.
