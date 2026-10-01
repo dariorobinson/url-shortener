@@ -1,6 +1,16 @@
 package com.schwab.urlshortener.service;
 
 import com.schwab.urlshortener.config.ShortCodeProperties;
+import com.schwab.urlshortener.entity.ShortUrl;
+import com.schwab.urlshortener.entity.ShortUrlStatus;
+import com.schwab.urlshortener.exception.ShortUrlAlreadyActiveException;
+import com.schwab.urlshortener.exception.ShortUrlAlreadyDeactivatedException;
+import com.schwab.urlshortener.model.Caller;
+import com.schwab.urlshortener.model.CreateShortUrlCommand;
+import com.schwab.urlshortener.model.ShortUrlStats;
+import com.schwab.urlshortener.model.ShortUrlView;
+import com.schwab.urlshortener.model.StatsPeriod;
+import com.schwab.urlshortener.model.UpdateShortUrlCommand;
 import com.schwab.urlshortener.repository.ClickEventRepository;
 import com.schwab.urlshortener.repository.PostgresServerErrors;
 import com.schwab.urlshortener.repository.ShortUrlRepository;
@@ -12,10 +22,6 @@ import com.schwab.urlshortener.service.exception.InvalidUrlException;
 import com.schwab.urlshortener.service.exception.ShortCodeUnavailableException;
 import com.schwab.urlshortener.service.exception.ShortUrlConcurrentModificationException;
 import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
-import com.schwab.urlshortener.util.domain.ShortUrl;
-import com.schwab.urlshortener.util.domain.ShortUrlStatus;
-import com.schwab.urlshortener.util.domain.exception.ShortUrlAlreadyActiveException;
-import com.schwab.urlshortener.util.domain.exception.ShortUrlAlreadyDeactivatedException;
 import com.schwab.urlshortener.util.shortcode.ShortCodeFormat;
 import com.schwab.urlshortener.util.shortcode.ShortCodeGenerator;
 import com.schwab.urlshortener.util.validation.AliasPolicy;

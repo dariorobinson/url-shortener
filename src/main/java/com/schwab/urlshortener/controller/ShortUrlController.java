@@ -1,19 +1,20 @@
 package com.schwab.urlshortener.controller;
 
 import com.schwab.urlshortener.config.OpenApiConfig;
-import com.schwab.urlshortener.controller.dto.CreateShortUrlRequest;
-import com.schwab.urlshortener.controller.dto.ShortUrlResponse;
-import com.schwab.urlshortener.controller.dto.ShortUrlStatsResponse;
-import com.schwab.urlshortener.controller.dto.UpdateShortUrlRequest;
 import com.schwab.urlshortener.controller.error.ErrorResponseSchema;
+import com.schwab.urlshortener.model.Caller;
+import com.schwab.urlshortener.model.CreateShortUrlCommand;
+import com.schwab.urlshortener.model.ShortUrlView;
+import com.schwab.urlshortener.model.UpdateShortUrlCommand;
+import com.schwab.urlshortener.model.dto.CreateShortUrlRequest;
+import com.schwab.urlshortener.model.dto.ShortUrlResponse;
+import com.schwab.urlshortener.model.dto.ShortUrlStatsResponse;
+import com.schwab.urlshortener.model.dto.UpdateShortUrlRequest;
 import com.schwab.urlshortener.security.Role;
-import com.schwab.urlshortener.service.Caller;
-import com.schwab.urlshortener.service.CreateShortUrlCommand;
 import com.schwab.urlshortener.service.ShortUrlService;
-import com.schwab.urlshortener.service.ShortUrlView;
-import com.schwab.urlshortener.service.UpdateShortUrlCommand;
 import com.schwab.urlshortener.service.exception.InvalidUpdateRequestException;
 import com.schwab.urlshortener.service.exception.StatsParameter;
+import com.schwab.urlshortener.util.link.ShortUrlLinks;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.enums.ParameterIn;
@@ -75,7 +76,7 @@ import org.springframework.web.bind.annotation.RestController;
 @SecurityRequirement(name = OpenApiConfig.BASIC_AUTH)
 class ShortUrlController {
 
-    static final String BASE_PATH = "/api/v1/urls";
+    static final String BASE_PATH = ShortUrlLinks.MANAGEMENT_PATH;
 
     /** D100: the only query parameter names the stats endpoint accepts, each at most once. */
     static final Set<String> STATS_PARAMETERS = Arrays.stream(StatsParameter.values())

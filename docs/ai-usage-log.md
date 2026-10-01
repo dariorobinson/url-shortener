@@ -1163,3 +1163,14 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
 - **Engineer decision:** requested by the engineer.
 - **Rationale:** *(engineer to add)*
 - **Validation:** `./mvnw -o clean verify` exit 0 with identical counts (Surefire 1181/0, Failsafe 924/0, LINE coverage 854/867); the app built and run with `docker compose up --build` in an isolated project and smoke-tested (health, create, redirect, stats, PATCH, 404 after deactivate, ADMIN delete, OpenAPI), then removed.
+
+## Entry 40 — Entity and model packages (post-backlog refactor)
+
+- **Date:** 2026-10-01
+- **Engineer request:** put all entity and model classes in new `entity` and `model` packages; only persisted classes in `entity`, DTOs and other models in `model`.
+- **AI decisions for the boundary cases (flagged to the engineer, D133):** `ShortUrlStatus` (a persisted column enum) goes to `entity`; the three entity transition exceptions are not models, so they go to a top-level `exception` package; `StatsPeriod` moves to `model` because `ShortUrlStats` is built from it (leaving it would create a `model` ↔ `service` cycle); `ShortUrlLinks` moves to `util.link` and `StrictOffsetDateTimeDeserializer` to `util.validation`, so DTOs never depend back on `controller`; `ErrorCode`, `ProblemDetails`, the properties records and `Role` stay where they are.
+- **One code change beyond moving files:** `ShortUrlLinks` now owns the `/api/v1/urls` path constant (`MANAGEMENT_PATH`) and `ShortUrlController.BASE_PATH` reads it, so the helper no longer depends on the controller. Behaviour is identical.
+- **AI work (main session, no agents):** `git mv` of 27 files (main and mirrored test classes); references rewritten in 32 files; missing same-package imports added from compiler errors; imports re-sorted. A script computing the package dependency graph found one cycle before (`controller` ↔ `controller.dto`) and none after.
+- **Engineer decision:** requested by the engineer.
+- **Rationale:** *(engineer to add)*
+- **Validation:** `./mvnw -o clean verify` exit 0 with identical counts (Surefire 1181/0, Failsafe 924/0, LINE 854/867); the app built and run with `docker compose up --build` in an isolated project and smoke-tested (health, create with alias and expiry, redirect, details, stats, PATCH, 404 after deactivate, 400 on a bad body, ADMIN delete, OpenAPI), then removed.

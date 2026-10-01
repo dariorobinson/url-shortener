@@ -1,8 +1,8 @@
 package com.schwab.urlshortener.util.analytics;
 
+import com.schwab.urlshortener.entity.ClickEvent;
 import com.schwab.urlshortener.repository.ClickEventRepository;
 import com.schwab.urlshortener.repository.ShortUrlRepository;
-import com.schwab.urlshortener.util.domain.ClickEvent;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import lombok.extern.slf4j.Slf4j;

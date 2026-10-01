@@ -1,12 +1,12 @@
 package com.schwab.urlshortener.service;
 
+import com.schwab.urlshortener.entity.ShortUrl;
+import com.schwab.urlshortener.entity.ShortUrlStatus;
 import com.schwab.urlshortener.repository.PostgresServerErrors;
 import com.schwab.urlshortener.repository.ShortUrlRepository;
 import com.schwab.urlshortener.service.exception.ShortUrlExpiredException;
 import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
 import com.schwab.urlshortener.util.analytics.ClickRecorder;
-import com.schwab.urlshortener.util.domain.ShortUrl;
-import com.schwab.urlshortener.util.domain.ShortUrlStatus;
 import com.schwab.urlshortener.util.shortcode.ShortCodeFormat;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -43,7 +43,6 @@ public class RedirectService {
     private final ClickRecorder clickRecorder;
     private final Clock clock;
     private final Counter lostClicks;
-
 
     /** The resolved link: the id for the recorder and the stored target. The entity never leaves this class. */
     private record Resolved(long id, String target) {

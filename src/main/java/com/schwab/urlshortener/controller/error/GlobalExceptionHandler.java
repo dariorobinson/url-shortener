@@ -1,5 +1,9 @@
 package com.schwab.urlshortener.controller.error;
 
+import com.schwab.urlshortener.exception.ShortUrlAlreadyActiveException;
+import com.schwab.urlshortener.exception.ShortUrlAlreadyDeactivatedException;
+import com.schwab.urlshortener.exception.ShortUrlDeletedException;
+import com.schwab.urlshortener.model.dto.FieldViolation;
 import com.schwab.urlshortener.service.exception.AliasAlreadyExistsException;
 import com.schwab.urlshortener.service.exception.InvalidAliasException;
 import com.schwab.urlshortener.service.exception.InvalidExpirationException;
@@ -10,9 +14,6 @@ import com.schwab.urlshortener.service.exception.ShortCodeUnavailableException;
 import com.schwab.urlshortener.service.exception.ShortUrlConcurrentModificationException;
 import com.schwab.urlshortener.service.exception.ShortUrlExpiredException;
 import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
-import com.schwab.urlshortener.util.domain.exception.ShortUrlAlreadyActiveException;
-import com.schwab.urlshortener.util.domain.exception.ShortUrlAlreadyDeactivatedException;
-import com.schwab.urlshortener.util.domain.exception.ShortUrlDeletedException;
 import com.schwab.urlshortener.util.shortcode.SecureRandomShortCodeGenerator;
 import com.schwab.urlshortener.util.validation.UrlValidator;
 import jakarta.servlet.http.HttpServletRequest;
@@ -62,7 +63,6 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     static final String QUERY_VALIDATION_DETAIL = "The query parameters failed validation.";
 
     private static final Map<ErrorCode, String> DETAIL = detailTexts();
-
 
     private static Map<ErrorCode, String> detailTexts() {
         Map<ErrorCode, String> texts = new EnumMap<>(ErrorCode.class);

@@ -35,7 +35,7 @@ Base package: `com.schwab.urlshortener`. `JAVA_HOME` must point to JDK 25.
 ## Code conventions
 
 **Structure**
-- Layers: `controller` (controllers, DTOs, error handling) → `service` → `repository`. Entities never leave the service layer. Supporting packages (`domain`, `validation`, `shortcode`, `analytics`, `web`) live under `util` (engineer direction, D132).
+- Layers: `controller` (controllers, error handling) → `service` → `repository`. Entities never leave the service layer. `entity` holds only classes persisted to the database; everything else the system passes around (commands, views, DTOs) lives in `model` and `model.dto`. Supporting packages (`analytics`, `shortcode`, `validation`, `link`, `web`) live under `util` (D132, D133).
 - DTOs and value objects are Java **records**, validated with Bean Validation.
 - Inject `Clock` wherever the current time is needed; never call `Instant.now()` directly.
 

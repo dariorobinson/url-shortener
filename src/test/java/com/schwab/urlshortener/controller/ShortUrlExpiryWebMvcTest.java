@@ -16,14 +16,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.schwab.urlshortener.config.AppProperties;
+import com.schwab.urlshortener.entity.ShortUrlStatus;
+import com.schwab.urlshortener.model.Caller;
+import com.schwab.urlshortener.model.CreateShortUrlCommand;
+import com.schwab.urlshortener.model.ShortUrlView;
+import com.schwab.urlshortener.model.UpdateShortUrlCommand;
 import com.schwab.urlshortener.security.SecuritySliceTestConfiguration;
-import com.schwab.urlshortener.service.Caller;
-import com.schwab.urlshortener.service.CreateShortUrlCommand;
 import com.schwab.urlshortener.service.ShortUrlService;
-import com.schwab.urlshortener.service.ShortUrlView;
-import com.schwab.urlshortener.service.UpdateShortUrlCommand;
 import com.schwab.urlshortener.service.exception.InvalidExpirationException;
-import com.schwab.urlshortener.util.domain.ShortUrlStatus;
+import com.schwab.urlshortener.util.link.ShortUrlLinks;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;

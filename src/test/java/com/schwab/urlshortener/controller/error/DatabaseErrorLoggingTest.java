@@ -3,11 +3,11 @@ package com.schwab.urlshortener.controller.error;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
+import com.schwab.urlshortener.entity.ShortUrl;
 import com.schwab.urlshortener.repository.PostgresServerErrors;
 import com.schwab.urlshortener.repository.ShortUrlRepository;
 import com.schwab.urlshortener.support.PostgresErrors;
 import com.schwab.urlshortener.support.RepositoryTest;
-import com.schwab.urlshortener.util.domain.ShortUrl;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

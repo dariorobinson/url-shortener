@@ -3,6 +3,7 @@ package com.schwab.urlshortener.controller.error;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.schwab.urlshortener.model.dto.FieldViolation;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;

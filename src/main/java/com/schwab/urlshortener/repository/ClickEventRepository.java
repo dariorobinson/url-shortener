@@ -1,6 +1,6 @@
 package com.schwab.urlshortener.repository;
 
-import com.schwab.urlshortener.util.domain.ClickEvent;
+import com.schwab.urlshortener.entity.ClickEvent;
 import java.time.Instant;
 import java.util.List;
 import java.util.stream.Collectors;

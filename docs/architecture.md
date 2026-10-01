@@ -146,21 +146,27 @@ support/IntegrationTestBase     support/@RepositoryTest
 
 ```
 com.schwab.urlshortener
-├── controller/         ShortUrlController, RedirectController, ShortUrlLinks (links built from APP_BASE_URL)
-│   ├── dto/            request/response records; UpdateShortUrlRequest (presence-tracking PATCH body);
-│   │                   StrictOffsetDateTimeDeserializer
+├── controller/         ShortUrlController, RedirectController
 │   └── error/          ErrorCode catalogue, ProblemDetails factory, GlobalExceptionHandler,
-│                       ProblemErrorController (/error), FieldViolation, PayloadTooLargeException
-├── service/            ShortUrlService, RedirectService, StatsPeriod, ExpirationPolicy, commands and views
+│                       ProblemErrorController (/error), PayloadTooLargeException, ErrorResponseSchema (docs only)
+├── service/            ShortUrlService, RedirectService, ExpirationPolicy
 │   └── exception/      service exceptions mapped by the advice
 ├── repository/         ShortUrlRepository (incl. the atomic click UPDATE), ClickEventRepository (daily counts),
 │                       PostgresServerErrors (the only class that imports org.postgresql)
-├── util/               supporting building blocks (engineer direction, D132)
-│   ├── domain/         ShortUrl (factory, intention-revealing transitions, no setters), ShortUrlStatus, ClickEvent
-│   │   └── exception/  transition exceptions
+├── entity/             persisted classes only (engineer direction, D133):
+│                       ShortUrl (factory, intention-revealing transitions, no setters), ClickEvent, ShortUrlStatus
+├── exception/          ShortUrlAlreadyActive / AlreadyDeactivated / Deleted (thrown by the entity's transitions)
+├── model/              everything the system passes around that is not persisted (D133):
+│   │                   Caller, CreateShortUrlCommand, UpdateShortUrlCommand, ShortUrlView, ShortUrlStats,
+│   │                   DailyClicks, StatsPeriod
+│   └── dto/            request/response types: CreateShortUrlRequest, UpdateShortUrlRequest (presence-tracking
+│                       PATCH body), ShortUrlResponse, ShortUrlStatsResponse, DailyClicksResponse, FieldViolation
+├── util/               supporting building blocks (D132)
 │   ├── analytics/      ClickRecorder (interface) + JpaClickRecorder (own REQUIRES_NEW transaction)
 │   ├── shortcode/      ShortCodeGenerator + SecureRandomShortCodeGenerator, ShortCodeFormat (D6)
-│   ├── validation/     UrlValidator (D11, D28, D47, D49, D84), AliasPolicy (D6, D29, D48), LocationEncoder (D75)
+│   ├── validation/     UrlValidator (D11, D28, D47, D49, D84), AliasPolicy (D6, D29, D48), LocationEncoder (D75),
+│   │                   StrictOffsetDateTimeDeserializer (D123)
+│   ├── link/           ShortUrlLinks (public link and Location built from APP_BASE_URL, D33)
 │   └── web/            RequestIdFilter, RequestBodyLimitFilter, their registration and HttpProperties
 ├── security/           SecurityConfig (filter chain, RoleHierarchy), user accounts from configuration,
 │                       401/403 problem writers
@@ -168,7 +174,7 @@ com.schwab.urlshortener
                         Tomcat error-page valve
 ```
 
-Dependency direction: `controller` → `service` → `repository` / `util.domain`; entities never leave the service layer. `util.web` depends on `controller.error` and `security`; nothing depends on `util.web`.
+Dependency direction: `controller` → `service` → `repository` → `entity`; `model` and `model.dto` depend on `entity` and on small helpers, never on `controller` or `service`; entities never leave the service layer. The package graph has **no cycles** (checked by script when D133 was applied).
 
 ## Database schema (V1 *implemented (US-002)*, amended by D47; V2 *implemented (US-010)*; V3 *implemented (US-016)*)
 
@@ -242,7 +248,7 @@ ALTER TABLE short_url ADD CONSTRAINT ck_short_url_expires_after_created
 
 The full detail is in the US-002 Design note.
 
-**`ShortUrl`** (`domain`):
+**`ShortUrl`** (`entity`):
 - JPA entity on `short_url`. Lombok `@Getter`, `@NoArgsConstructor(access = PROTECTED)`, `@ToString(onlyExplicitlyIncluded = true)` (id, shortCode, status, version only: never the URL or usernames). No setters. Object-identity equality.
 - `id`: `Long`, `IDENTITY`. `status`: `@Enumerated(STRING)`. `version`: `Long @Version`. Hibernate seeds 0, and a `null` version tells Spring Data the entity is new.
 - Timestamps are `Instant` ↔ `timestamptz`.
@@ -305,7 +311,7 @@ The full detail is in the US-006 Design note.
   - Unknown fields and duplicate keys → `MALFORMED_REQUEST`.
 - **Response** `ShortUrlResponse`, shared with US-007: `shortCode`, `shortUrl`, `originalUrl`, `status`, `customAlias`, `clickCount`, `createdAt` (ISO-8601 UTC), `lastAccessedAt` (nullable, always present). There is no `createdBy`.
   - `Location: /api/v1/urls/{code}` is relative.
-  - `shortUrl` is APP_BASE_URL with trailing slashes removed, plus `/` and the code, built by `controller/ShortUrlLinks`. It never uses `Host` or forwarded headers (D33).
+  - `shortUrl` is APP_BASE_URL with trailing slashes removed, plus `/` and the code, built by `util/link/ShortUrlLinks`. It never uses `Host` or forwarded headers (D33).
 - **Flow:** `ShortUrlController` → `ShortUrlService.create(CreateShortUrlCommand)` → `ShortUrlView`, mapped to `ShortUrlResponse` in `api`. Entities never leave `service`.
 - **Content negotiation (D70):** `@RequestMapping(path = "/api/v1/urls", produces = application/json)` on the class. An unacceptable `Accept` (for example `application/xml`, `text/plain` or `application/problem+json`) gets `406 NOT_ACCEPTABLE` with no row created (US-006 AC17).
 

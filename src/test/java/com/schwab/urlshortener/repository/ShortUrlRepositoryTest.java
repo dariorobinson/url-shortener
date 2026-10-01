@@ -3,10 +3,10 @@ package com.schwab.urlshortener.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.schwab.urlshortener.entity.ShortUrl;
+import com.schwab.urlshortener.entity.ShortUrlStatus;
 import com.schwab.urlshortener.support.PostgresErrors;
 import com.schwab.urlshortener.support.RepositoryTest;
-import com.schwab.urlshortener.util.domain.ShortUrl;
-import com.schwab.urlshortener.util.domain.ShortUrlStatus;
 import jakarta.persistence.TransactionRequiredException;
 import java.sql.Timestamp;
 import java.time.Instant;

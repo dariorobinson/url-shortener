@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.schwab.urlshortener.service.StatsPeriod;
+import com.schwab.urlshortener.model.StatsPeriod;
 import com.zaxxer.hikari.HikariDataSource;
 import java.net.URLDecoder;
 import java.net.URLEncoder;

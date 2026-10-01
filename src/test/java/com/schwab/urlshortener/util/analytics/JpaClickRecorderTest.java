@@ -11,9 +11,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.schwab.urlshortener.entity.ClickEvent;
 import com.schwab.urlshortener.repository.ClickEventRepository;
 import com.schwab.urlshortener.repository.ShortUrlRepository;
-import com.schwab.urlshortener.util.domain.ClickEvent;
 import java.lang.reflect.Method;
 import java.time.Instant;
 import java.util.Arrays;
