@@ -781,3 +781,9 @@ Round 2:
 - **QA-owned support and test edits made in US-011 (qa-tester)**
   - **`support/ShortUrlTestData`:** the class Javadoc is re-wrapped (text unchanged); new imports `OffsetDateTime` and `ZoneOffset`; new method `seedClickEvents(code, Instant...)` (explicit `clicked_at` rows plus the recorder's `click_count` and `GREATEST(last_accessed_at, ...)` effect, D94). No existing method changed.
   - **`support/ClickRecordingConcurrencyIT`:** class Javadoc only, re-wrapped into separate sentences for AC4, the PATCH race and the state race. No test or assertion changed.
+
+## Post-completion change (engineer-approved at the US-016 G2; D106–D127; main session, US-016)
+
+- `RepositoryAnnotationsTest` — **updated** the class-level `EXPECTED_CLICK_SQL`: adds `AND (expires_at IS NULL OR expires_at > :clickedAt)` (D117).
+- `RedirectServiceTest.shouldNeverTouchTheRecorderOrTheClockWhenResolvingWithoutRecording` — **renamed** to `shouldNeverTouchTheRecorderAndReadTheClockOnceWhenResolvingWithoutRecording` and **updated**: HEAD must now read the clock (once) to decide expiry; it still never records (D18).
+- `RedirectServiceTest.shouldFailOpenWhenTheClockItselfFails` — **removed** and **replaced** by `shouldFailTheRedirectWithoutRecordingOrLoggingTheUrlWhenTheClockFails`: a clock failure now fails the redirect (expiry cannot be decided without "now"), still without recording or logging the URL. Accepted by the engineer at US-016 G3 as **D128**.

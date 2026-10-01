@@ -1081,3 +1081,8 @@ Round 2:
 1. "Every length-limit constraint test covers the value at the limit, the limit plus one, and the limit plus one where the extra character is a trailing space. The at-limit test reads the stored value back and asserts it equals the input exactly."
 2. "In a parameterized test, each case asserts the property that makes it different from the others (for example `endsWith(" ")`), not only a property the cases share, such as length."
 3. "A length limit given in characters is enforced with `char_length`, never `octet_length`, and a test with multibyte input pins it."
+
+## Post-completion change (engineer-approved at the US-016 G2; D106–D127; main session, US-016)
+
+- `ShortUrlSchemaTest.shouldCreateShortUrlColumnsExactlyAsSpecified` — **updated**: 14 columns, the last being V3's nullable `expires_at`.
+- `ShortUrlSchemaTest.shouldDeclareAllNamedConstraints` — **updated**: adds `ck_short_url_expires_after_created`.

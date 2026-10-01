@@ -386,7 +386,7 @@ class StatsPeriodTest {
         StatsPeriod period = resolve("UTC", "2026-03-01", "2026-03-03");
         List<DailyClicks> daily = period.densify(List.of(new DayCount(1, 1), new DayCount(2, 4), new DayCount(3, 1)));
 
-        ShortUrlStats stats = ShortUrlStats.of("Abc1234", period, 100L, null, daily);
+        ShortUrlStats stats = ShortUrlStats.of("Abc1234", period, 100L, null, daily, null, false);
 
         assertThat(stats.clicksInRange()).isEqualTo(6L);
         assertThat(stats.totalClicks()).isEqualTo(100L);

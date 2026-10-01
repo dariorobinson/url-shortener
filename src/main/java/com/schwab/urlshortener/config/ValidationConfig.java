@@ -7,7 +7,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties({AppProperties.class, AliasProperties.class})
+@EnableConfigurationProperties({AppProperties.class, AliasProperties.class, ExpirationProperties.class})
 class ValidationConfig {
 
     @Bean

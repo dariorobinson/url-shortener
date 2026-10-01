@@ -45,7 +45,7 @@ class ShortUrlSchemaTest {
                 ORDER BY ordinal_position
                 """);
 
-        assertThat(columns).hasSize(13);
+        assertThat(columns).hasSize(14);
 
         assertColumn(columns.get(0), "id", "bigint", null, "NO", "nextval('short_url_id_seq'::regclass)");
         assertColumn(columns.get(1), "short_code", "text", null, "NO", null);
@@ -60,6 +60,8 @@ class ShortUrlSchemaTest {
         assertColumn(columns.get(10), "deleted_at", "timestamp with time zone", null, "YES", null);
         assertColumn(columns.get(11), "deleted_by", "character varying", 100, "YES", null);
         assertColumn(columns.get(12), "version", "bigint", null, "NO", "0");
+        // V3 (D106): appended by ALTER TABLE, so it is the last column; nullable, no default = never expires.
+        assertColumn(columns.get(13), "expires_at", "timestamp with time zone", null, "YES", null);
     }
 
     private static void assertColumn(Map<String, Object> column, String name, String dataType,
@@ -89,7 +91,8 @@ class ShortUrlSchemaTest {
                 Map.entry("ck_short_url_click_count", "c"),
                 Map.entry("ck_short_url_code_format", "c"),
                 Map.entry("ck_short_url_original_url_length", "c"),
-                Map.entry("ck_short_url_deleted_consistency", "c"));
+                Map.entry("ck_short_url_deleted_consistency", "c"),
+                Map.entry("ck_short_url_expires_after_created", "c"));
     }
 
     @Test

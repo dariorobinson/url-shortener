@@ -89,25 +89,27 @@ class OpenApiDocsIT extends IntegrationTestBase {
     }
 
     @Test
-    void shouldDescribeCreateRequestBodyWithOriginalUrlRequiredAndAliasOptional() {
+    void shouldDescribeCreateRequestBodyWithOriginalUrlRequiredAndAliasAndExpiresAtOptional() {
         assertThat(post.isMissingNode()).as("POST %s documented", CREATE_PATH).isFalse();
         JsonNode content = post.path("requestBody").path("content");
         assertThat(names(content)).containsExactly("application/json");
         JsonNode schema = resolve(content.path("application/json").path("schema"));
-        assertThat(names(schema.path("properties"))).containsExactlyInAnyOrder("originalUrl", "alias");
+        assertThat(names(schema.path("properties"))).containsExactlyInAnyOrder("originalUrl", "alias", "expiresAt");
+        assertThat(schema.path("properties").path("expiresAt").path("format").asText()).isEqualTo("date-time");
         List<String> required = new ArrayList<>();
         schema.path("required").forEach(n -> required.add(n.asText()));
-        assertThat(required).contains("originalUrl").doesNotContain("alias");
+        assertThat(required).contains("originalUrl").doesNotContain("alias").doesNotContain("expiresAt");
     }
 
     @Test
-    void shouldDescribe201AsJsonOnlyWithTheEightFieldResourceAndLocationHeader() {
+    void shouldDescribe201AsJsonOnlyWithTheTenFieldResourceAndLocationHeader() {
         JsonNode created = post.path("responses").path("201");
         assertThat(created.isMissingNode()).isFalse();
         assertThat(names(created.path("content"))).containsExactly("application/json");
         JsonNode schema = resolve(created.path("content").path("application/json").path("schema"));
         assertThat(names(schema.path("properties"))).containsExactlyInAnyOrder("shortCode", "shortUrl",
-                "originalUrl", "status", "customAlias", "clickCount", "createdAt", "lastAccessedAt");
+                "originalUrl", "status", "customAlias", "clickCount", "createdAt", "lastAccessedAt", "expiresAt",
+                "expired");
         assertThat(created.path("headers").has("Location")).isTrue();
     }
 
@@ -172,7 +174,7 @@ class OpenApiDocsIT extends IntegrationTestBase {
     }
 
     @Test
-    void shouldDocumentGet200AsJsonOnlyWithTheSameEightPropertiesAsCreate() {
+    void shouldDocumentGet200AsJsonOnlyWithTheSameTenPropertiesAsCreate() {
         JsonNode ok = getOne.path("responses").path("200");
         assertThat(ok.isMissingNode()).isFalse();
         assertThat(names(ok.path("content"))).containsExactly("application/json");
@@ -181,7 +183,8 @@ class OpenApiDocsIT extends IntegrationTestBase {
                 .path("application/json").path("schema"));
         assertThat(names(schema.path("properties"))).isEqualTo(names(createdSchema.path("properties")));
         assertThat(names(schema.path("properties"))).containsExactlyInAnyOrder("shortCode", "shortUrl",
-                "originalUrl", "status", "customAlias", "clickCount", "createdAt", "lastAccessedAt");
+                "originalUrl", "status", "customAlias", "clickCount", "createdAt", "lastAccessedAt", "expiresAt",
+                "expired");
     }
 
     @Test
@@ -229,8 +232,10 @@ class OpenApiDocsIT extends IntegrationTestBase {
     }
 
     @Test
-    void shouldDocumentExactlyThe302And404ResponsesWithNoImplicit200() {
-        assertThat(names(redirect.path("responses"))).containsExactly("302", "404");
+    void shouldDocumentExactlyThe302404And410ResponsesWithNoImplicit200() {
+        assertThat(names(redirect.path("responses"))).containsExactly("302", "404", "410");
+        assertThat(names(redirect.path("responses").path("410").path("content")))
+                .containsExactly("application/problem+json");
     }
 
     @Test
@@ -264,7 +269,7 @@ class OpenApiDocsIT extends IntegrationTestBase {
     }
 
     @Test
-    void shouldDocumentPatchWithOneCodePathParameterAndAJsonOnlyRequestBodyWithActiveRequired() {
+    void shouldDocumentPatchWithOneCodePathParameterAndAJsonOnlyRequestBodyWithActiveAndExpiresAtOptional() {
         assertThat(patchOne.isMissingNode()).as("PATCH %s documented", GET_PATH).isFalse();
         JsonNode parameters = patchOne.path("parameters");
         assertThat(parameters.size()).isEqualTo(1);
@@ -274,11 +279,11 @@ class OpenApiDocsIT extends IntegrationTestBase {
         JsonNode content = patchOne.path("requestBody").path("content");
         assertThat(names(content)).containsExactly("application/json");
         JsonNode schema = resolve(content.path("application/json").path("schema"));
-        assertThat(names(schema.path("properties"))).containsExactly("active");
+        assertThat(names(schema.path("properties"))).containsExactlyInAnyOrder("active", "expiresAt");
         assertThat(schema.path("properties").path("active").path("type").asText()).isEqualTo("boolean");
-        List<String> required = new ArrayList<>();
-        schema.path("required").forEach(n -> required.add(n.asText()));
-        assertThat(required).containsExactly("active");
+        assertThat(schema.path("properties").path("expiresAt").path("format").asText()).isEqualTo("date-time");
+        // D114: either field may be omitted; a body with neither is rejected by the controller, not the schema.
+        assertThat(schema.path("required").isMissingNode() || schema.path("required").isEmpty()).isTrue();
     }
 
     @Test
@@ -432,7 +437,7 @@ class OpenApiDocsIT extends IntegrationTestBase {
         JsonNode schema = resolve(ok.path("content").path("application/json").path("schema"));
 
         assertThat(names(schema.path("properties"))).containsExactlyInAnyOrder("shortCode", "timezone", "from", "to",
-                "totalClicks", "clicksInRange", "lastAccessedAt", "daily");
+                "totalClicks", "clicksInRange", "lastAccessedAt", "daily", "expiresAt", "expired");
         JsonNode daily = schema.path("properties").path("daily");
         assertThat(daily.path("type").asText()).isEqualTo("array");
         assertThat(names(resolve(daily.path("items")).path("properties"))).containsExactlyInAnyOrder("date", "clicks");

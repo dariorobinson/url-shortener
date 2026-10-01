@@ -88,6 +88,10 @@ public class ShortUrl {
     @Column(name = "deleted_by", length = MAX_ACTOR_LENGTH)
     private String deletedBy;
 
+    /** D106, D112: null means the link never expires; expiry is computed from this column, never stored as a status. */
+    @Column(name = "expires_at")
+    private Instant expiresAt;
+
     @Version
     @Column(name = "version", nullable = false)
     @ToString.Include
@@ -100,7 +104,21 @@ public class ShortUrl {
      */
     public static ShortUrl create(String shortCode, String originalUrl, boolean customAlias,
                                    String createdBy, Instant createdAt) {
+        return create(shortCode, originalUrl, customAlias, createdBy, createdAt, null);
+    }
+
+    /**
+     * Creates a link that expires at {@code expiresAt} (D107), or never when it is null. The caller has already
+     * validated the expiry against the clock and the configured horizon; the database CHECK
+     * {@code ck_short_url_expires_after_created} is the final guarantee that it follows {@code createdAt}.
+     *
+     * @throws NullPointerException if any argument other than {@code expiresAt} is null
+     * @throws IllegalArgumentException if {@code createdBy} is blank, padded or too long
+     */
+    public static ShortUrl create(String shortCode, String originalUrl, boolean customAlias,
+                                   String createdBy, Instant createdAt, Instant expiresAt) {
         ShortUrl url = new ShortUrl();
+        url.expiresAt = expiresAt == null ? null : toDbPrecision(expiresAt);
         url.shortCode = Objects.requireNonNull(shortCode, "shortCode");
         url.originalUrl = Objects.requireNonNull(originalUrl, "originalUrl");
         url.customAlias = customAlias;
@@ -157,6 +175,36 @@ public class ShortUrl {
      * PostgreSQL silently truncates trailing spaces that overflow a VARCHAR(n), so the bound is
      * enforced here before insert (D47, D51). Length is in code points, matching {@code char_length}.
      */
+    /**
+     * D111: a link is expired from the instant {@code expiresAt} itself onwards. Never true when no expiry is set.
+     *
+     * @throws NullPointerException if {@code now} is null
+     */
+    public boolean isExpiredAt(Instant now) {
+        Objects.requireNonNull(now, "now");
+        return expiresAt != null && !now.isBefore(expiresAt);
+    }
+
+    /**
+     * Sets, changes or clears ({@code null}) the expiry (D114). Setting the value the link already has is not a
+     * change (D125): nothing is modified and {@code false} is returned, so no UPDATE is written.
+     *
+     * @return true if the expiry changed
+     * @throws NullPointerException if {@code at} is null
+     * @throws ShortUrlDeletedException if the link is DELETED (D46)
+     */
+    public boolean changeExpiry(Instant newExpiry, Instant at) {
+        Instant now = toDbPrecision(Objects.requireNonNull(at, "at"));
+        requireNotDeleted();
+        Instant target = newExpiry == null ? null : toDbPrecision(newExpiry);
+        if (Objects.equals(target, expiresAt)) {
+            return false;
+        }
+        expiresAt = target;
+        updatedAt = now;
+        return true;
+    }
+
     private static String requireValidActor(String actor, String name) {
         if (actor.isBlank() || !actor.equals(actor.strip())
                 || actor.codePointCount(0, actor.length()) > MAX_ACTOR_LENGTH) {

@@ -194,7 +194,7 @@ The AI proposed a default for every question; the engineer answered **"accept al
 
 ## Scenario 2 — Brownfield: adding URL expiration
 
-**Status:** Impact analysis approved (US-013, 2026-09-30). The engineer approved the analysis and the X1–X6 recommendations (D122–D127). Implementation is US-016.
+**Status:** Done. Impact analysis approved (US-013); implemented and approved (US-016, D128). The analysis and X1–X6 were approved as D122–D127.
 
 The requirement being analysed is the one clarified in Scenario 3 (D106–D121). This analysis was written against the shipped code at commit `f89795f` (US-001–US-011 done).
 
@@ -326,3 +326,12 @@ ALTER TABLE short_url ADD CONSTRAINT ck_short_url_expires_after_created
 US-016 "Implement URL expiration" covers §1–§7. It needs a design gate for X1–X6 and the exact V3 SQL. The `depends_on` of US-015 gains US-016, so the final docs are written last.
 
 > Scenario 3 is performed before Scenario 2 because the expiration requirement must be clarified before its impact can be analysed.
+
+### 9. Implementation and what the analysis predicted (US-016)
+
+- **Predicted and confirmed:** the two US-009 tests that rejected `expiresAt` had to flip (§5.1); the pinned click SQL, the exact schema tests and the error catalogue changed (§5.3–§5.5); the redirect needed a single clock read (§1); the 302 path stayed byte-identical (§5.8, `RedirectIT` unchanged and green); the empty-PATCH body stayed identical (§5.2, its test unchanged).
+- **Not predicted:**
+  - Web slices could not load an advice that depended on a service bean, so the expiry error now carries its rule text.
+  - Exact response-key sets were duplicated in 10 test classes (ITs, slices and Cucumber steps), and all had to gain the two fields.
+  - A US-010 test pinned fail-open for a failing clock. That is no longer possible once the clock decides expiry; the engineer accepted the change as D128.
+- **Validation:** 1140 unit/slice/repository tests and 904 integration tests (255 Cucumber scenarios) pass; coverage 99.34%.

@@ -49,7 +49,8 @@ class LifecycleIT extends IntegrationTestBase {
     private static final Set<String> PROBLEM_KEYS =
             Set.of("type", "title", "status", "detail", "instance", "errorCode");
     private static final Set<String> RESOURCE_KEYS = Set.of("shortCode", "shortUrl", "originalUrl",
-            "status", "customAlias", "clickCount", "createdAt", "lastAccessedAt");
+            "status", "customAlias", "clickCount", "createdAt", "lastAccessedAt",
+            "expiresAt", "expired");
     private static final Instant SEEDED_LAST_ACCESS = Instant.parse("2026-03-01T10:15:30Z");
 
     private static final String ALICE_ACTIVE = "AliceAct1";
@@ -550,7 +551,7 @@ class LifecycleIT extends IntegrationTestBase {
     @ValueSource(strings = {"{\"active\":\"false\"}", "{\"active\":\"true\"}", "{\"active\":0}", "{\"active\":1}",
             "{\"active\":2}", "{\"active\":1.0}", "{\"active\":\"\"}", "{\"active\":\"maybe\"}", "{\"active\":{}}",
             "{\"active\":[]}", "{\"active\":[true]}", "{\"active\":false,\"x\":1}",
-            "{\"expiresAt\":\"2030-01-01T00:00:00Z\"}", "{\"active\":false,\"active\":true}", "", "null", "[]",
+            "{\"expiresAt\":1893456000}", "{\"active\":false,\"active\":true}", "", "null", "[]",
             "{", "\"false\"", "false"})
     void shouldReturn400MalformedRequestForABodyThatIsNotAStrictBooleanDocumentAndChangeNothing(String body)
             throws Exception {

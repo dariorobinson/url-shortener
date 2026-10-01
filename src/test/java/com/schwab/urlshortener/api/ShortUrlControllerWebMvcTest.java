@@ -8,7 +8,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.startsWith;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -39,6 +38,7 @@ import com.schwab.urlshortener.service.Caller;
 import com.schwab.urlshortener.service.CreateShortUrlCommand;
 import com.schwab.urlshortener.service.ShortUrlService;
 import com.schwab.urlshortener.service.ShortUrlView;
+import com.schwab.urlshortener.service.UpdateShortUrlCommand;
 import com.schwab.urlshortener.service.exception.AliasAlreadyExistsException;
 import com.schwab.urlshortener.service.exception.InvalidAliasException;
 import com.schwab.urlshortener.service.exception.InvalidUrlException;
@@ -87,7 +87,8 @@ class ShortUrlControllerWebMvcTest {
     private static final Instant CREATED_AT = Instant.parse("2026-09-29T14:03:12.123456Z");
     private static final Set<String> BASE_KEYS = Set.of("type", "title", "status", "detail", "instance", "errorCode");
     private static final Set<String> RESOURCE_KEYS = Set.of("shortCode", "shortUrl", "originalUrl", "status",
-            "customAlias", "clickCount", "createdAt", "lastAccessedAt");
+            "customAlias", "clickCount", "createdAt", "lastAccessedAt",
+            "expiresAt", "expired");
 
     @TestConfiguration(proxyBeanMethods = false)
     @EnableConfigurationProperties(AppProperties.class)
@@ -127,7 +128,7 @@ class ShortUrlControllerWebMvcTest {
     // ---- AC1, D58
 
     @Test
-    void shouldReturn201WithRelativeLocationAndTheExactEightFieldResource() throws Exception {
+    void shouldReturn201WithRelativeLocationAndTheExactTenFieldResource() throws Exception {
         when(service.create(any())).thenReturn(view("aB3dE9x", false));
 
         MvcResult result = mockMvc.perform(create("{\"originalUrl\":\"https://example.com/page\"}"))
@@ -492,7 +493,7 @@ class ShortUrlControllerWebMvcTest {
     private static final String CODE_PATH = PATH + "/" + CODE;
 
     @Test
-    void shouldReturn200WithTheExactEightFieldResourceAndANullLastAccessedAt() throws Exception {
+    void shouldReturn200WithTheExactTenFieldResourceAndANullLastAccessedAt() throws Exception {
         when(service.get(any(), any())).thenReturn(view(CODE, false));
 
         MvcResult result = mockMvc.perform(get(CODE_PATH).with(httpBasic(ALICE, ALICE_PASSWORD)))
@@ -694,8 +695,8 @@ class ShortUrlControllerWebMvcTest {
     }
 
     @Test
-    void shouldReturn200WithTheExactEightFieldResourceAndDeactivatedStatusOnPatchFalse() throws Exception {
-        when(service.setActive(any(), anyBoolean(), any())).thenReturn(viewWithStatus(ShortUrlStatus.DEACTIVATED));
+    void shouldReturn200WithTheExactTenFieldResourceAndDeactivatedStatusOnPatchFalse() throws Exception {
+        when(service.update(any(), any(), any())).thenReturn(viewWithStatus(ShortUrlStatus.DEACTIVATED));
 
         MvcResult result = mockMvc.perform(patchAsAlice("{\"active\":false}"))
                 .andExpect(status().isOk())
@@ -711,33 +712,33 @@ class ShortUrlControllerWebMvcTest {
         assertThat(result.getResponse().getContentAsString()).doesNotContain("createdBy").doesNotContain("updatedAt")
                 .doesNotContain("version").doesNotContain("alice");
         ArgumentCaptor<Caller> caller = ArgumentCaptor.forClass(Caller.class);
-        verify(service).setActive(eq(CODE), eq(false), caller.capture());
+        verify(service).update(eq(CODE), eq(UpdateShortUrlCommand.active(false)), caller.capture());
         assertThat(caller.getValue()).isEqualTo(new Caller("alice", false));
     }
 
     @Test
     void shouldReturn200WithActiveStatusAndPassTrueOnPatchTrue() throws Exception {
-        when(service.setActive(any(), anyBoolean(), any())).thenReturn(viewWithStatus(ShortUrlStatus.ACTIVE));
+        when(service.update(any(), any(), any())).thenReturn(viewWithStatus(ShortUrlStatus.ACTIVE));
 
         mockMvc.perform(patchAsAlice("{\"active\":true}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ACTIVE"));
 
-        verify(service).setActive(eq(CODE), eq(true), eq(new Caller("alice", false)));
+        verify(service).update(eq(CODE), eq(UpdateShortUrlCommand.active(true)), eq(new Caller("alice", false)));
     }
 
     @Test
     void shouldPassAnAdminCallerWithTheAdminFlagOnPatch() throws Exception {
-        when(service.setActive(any(), anyBoolean(), any())).thenReturn(viewWithStatus(ShortUrlStatus.DEACTIVATED));
+        when(service.update(any(), any(), any())).thenReturn(viewWithStatus(ShortUrlStatus.DEACTIVATED));
 
         mockMvc.perform(patchAs(ADMIN, ADMIN_PASSWORD, "{\"active\":false}")).andExpect(status().isOk());
 
-        verify(service).setActive(eq(CODE), eq(false), eq(new Caller("admin", true)));
+        verify(service).update(eq(CODE), eq(UpdateShortUrlCommand.active(false)), eq(new Caller("admin", true)));
     }
 
     @Test
     void shouldStillSerializeResponseBooleansAsJsonBooleansSoD89DoesNotTouchResponses() throws Exception {
-        when(service.setActive(any(), anyBoolean(), any())).thenReturn(
+        when(service.update(any(), any(), any())).thenReturn(
                 new ShortUrlView(CODE, "https://example.com/page", ShortUrlStatus.ACTIVE, true, 0L, CREATED_AT, null));
 
         String body = mockMvc.perform(patchAsAlice("{\"active\":true}")).andExpect(status().isOk())
@@ -765,7 +766,7 @@ class ShortUrlControllerWebMvcTest {
     @ParameterizedTest
     @ValueSource(strings = {"", "null", "[]", "{\"active\":", "{\"active\":\"maybe\"}", "{\"active\":{}}",
             "{\"active\":[]}", "{\"active\":[true]}",
-            "{\"active\":false,\"x\":1}", "{\"expiresAt\":\"2030-01-01T00:00:00Z\"}",
+            "{\"active\":false,\"x\":1}", "{\"expiresAt\":1893456000}", "{\"expiresAt\":\"2030-01-01T00:00:00\"}",
             "{\"active\":true,\"active\":false}"})
     void shouldReturn400MalformedRequestWithoutParserDetailsForUnreadablePatchBodies(String body) throws Exception {
         MvcResult result = mockMvc.perform(patchAsAlice(body))
@@ -797,13 +798,13 @@ class ShortUrlControllerWebMvcTest {
 
     @Test
     void shouldStillAcceptRealJsonBooleansSoTheStrictRowsAboveAreNotVacuous() throws Exception {
-        when(service.setActive(any(), anyBoolean(), any())).thenReturn(viewWithStatus(ShortUrlStatus.ACTIVE));
+        when(service.update(any(), any(), any())).thenReturn(viewWithStatus(ShortUrlStatus.ACTIVE));
 
         mockMvc.perform(patchAsAlice("{\"active\":true}")).andExpect(status().isOk());
         mockMvc.perform(patchAsAlice("{\"active\":false}")).andExpect(status().isOk());
 
-        verify(service).setActive(CODE, true, new Caller("alice", false));
-        verify(service).setActive(CODE, false, new Caller("alice", false));
+        verify(service).update(CODE, UpdateShortUrlCommand.active(true), new Caller("alice", false));
+        verify(service).update(CODE, UpdateShortUrlCommand.active(false), new Caller("alice", false));
     }
 
     // D89 scope: create is unchanged. Numbers given for the string properties are still coerced, as before.
@@ -859,12 +860,12 @@ class ShortUrlControllerWebMvcTest {
     @ParameterizedTest
     @ValueSource(strings = {"application/json", "*/*"})
     void shouldReturn200ForAnAcceptablePatchAcceptAsThePositiveControl(String accept) throws Exception {
-        when(service.setActive(any(), anyBoolean(), any())).thenReturn(viewWithStatus(ShortUrlStatus.DEACTIVATED));
+        when(service.update(any(), any(), any())).thenReturn(viewWithStatus(ShortUrlStatus.DEACTIVATED));
 
         mockMvc.perform(patchAsAlice("{\"active\":false}").header(HttpHeaders.ACCEPT, accept))
                 .andExpect(status().isOk());
 
-        verify(service).setActive(any(), anyBoolean(), any());
+        verify(service).update(any(), any(), any());
     }
 
     @Test
@@ -915,7 +916,7 @@ class ShortUrlControllerWebMvcTest {
 
     @Test
     void shouldReturn404ShortUrlNotFoundWithTheBaseKeysWhenThePatchTargetIsNotVisible() throws Exception {
-        when(service.setActive(any(), anyBoolean(), any())).thenThrow(new ShortUrlNotFoundException());
+        when(service.update(any(), any(), any())).thenThrow(new ShortUrlNotFoundException());
 
         MvcResult result = mockMvc.perform(patchAsAlice("{\"active\":false}"))
                 .andExpect(status().isNotFound())
@@ -925,14 +926,14 @@ class ShortUrlControllerWebMvcTest {
                 .andReturn();
 
         assertThat(keys(result)).isEqualTo(new TreeSet<>(BASE_KEYS));
-        verify(service).setActive(CODE, false, new Caller("alice", false));
+        verify(service).update(CODE, UpdateShortUrlCommand.active(false), new Caller("alice", false));
     }
 
     @Test
     void shouldReturnAByteIdentical404WhenTheServiceThrowsShortUrlDeletedInsteadOfNotFound() throws Exception {
-        when(service.setActive(any(), anyBoolean(), any())).thenThrow(new ShortUrlNotFoundException());
+        when(service.update(any(), any(), any())).thenThrow(new ShortUrlNotFoundException());
         MvcResult notFound = mockMvc.perform(patchAsAlice("{\"active\":false}")).andReturn();
-        doThrow(new ShortUrlDeletedException(CODE)).when(service).setActive(any(), anyBoolean(), any());
+        doThrow(new ShortUrlDeletedException(CODE)).when(service).update(any(), any(), any());
         MvcResult deleted = mockMvc.perform(patchAsAlice("{\"active\":false}")).andReturn();
 
         assertThat(notFound.getResponse().getStatus()).isEqualTo(404);
@@ -945,7 +946,7 @@ class ShortUrlControllerWebMvcTest {
 
     @Test
     void shouldReturn409AlreadyDeactivatedWithExactlyTheBaseKeys() throws Exception {
-        when(service.setActive(any(), anyBoolean(), any())).thenThrow(new ShortUrlAlreadyDeactivatedException(CODE));
+        when(service.update(any(), any(), any())).thenThrow(new ShortUrlAlreadyDeactivatedException(CODE));
 
         MvcResult result = mockMvc.perform(patchAsAlice("{\"active\":false}"))
                 .andExpect(status().isConflict())
@@ -960,7 +961,7 @@ class ShortUrlControllerWebMvcTest {
 
     @Test
     void shouldReturn409AlreadyActiveWithExactlyTheBaseKeys() throws Exception {
-        when(service.setActive(any(), anyBoolean(), any())).thenThrow(new ShortUrlAlreadyActiveException(CODE));
+        when(service.update(any(), any(), any())).thenThrow(new ShortUrlAlreadyActiveException(CODE));
 
         MvcResult result = mockMvc.perform(patchAsAlice("{\"active\":true}"))
                 .andExpect(status().isConflict())
@@ -973,7 +974,7 @@ class ShortUrlControllerWebMvcTest {
 
     @Test
     void shouldReturn409ConcurrentModificationWithExactlyTheBaseKeysOnPatch() throws Exception {
-        when(service.setActive(any(), anyBoolean(), any()))
+        when(service.update(any(), any(), any()))
                 .thenThrow(new ShortUrlConcurrentModificationException(new RuntimeException("internal-marker")));
 
         MvcResult result = mockMvc.perform(patchAsAlice("{\"active\":false}"))

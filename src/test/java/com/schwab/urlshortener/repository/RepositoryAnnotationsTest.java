@@ -37,7 +37,8 @@ import org.springframework.transaction.annotation.Transactional;
 class RepositoryAnnotationsTest {
 
     private static final String EXPECTED_CLICK_SQL = "UPDATE short_url SET click_count = click_count + 1,"
-            + " last_accessed_at = GREATEST(last_accessed_at, :clickedAt) WHERE id = :id AND status = 'ACTIVE'";
+            + " last_accessed_at = GREATEST(last_accessed_at, :clickedAt) WHERE id = :id AND status = 'ACTIVE'"
+            + " AND (expires_at IS NULL OR expires_at > :clickedAt)";
 
     /** D95, D103: the stats SQL, pinned. No zone string, no AT TIME ZONE: PostgreSQL only counts. */
     private static final String EXPECTED_STATS_SQL = "SELECT width_bucket(clicked_at,"

@@ -5,10 +5,13 @@ import com.schwab.urlshortener.domain.exception.ShortUrlAlreadyDeactivatedExcept
 import com.schwab.urlshortener.domain.exception.ShortUrlDeletedException;
 import com.schwab.urlshortener.service.exception.AliasAlreadyExistsException;
 import com.schwab.urlshortener.service.exception.InvalidAliasException;
+import com.schwab.urlshortener.service.exception.InvalidExpirationException;
 import com.schwab.urlshortener.service.exception.InvalidStatsQueryException;
+import com.schwab.urlshortener.service.exception.InvalidUpdateRequestException;
 import com.schwab.urlshortener.service.exception.InvalidUrlException;
 import com.schwab.urlshortener.service.exception.ShortCodeUnavailableException;
 import com.schwab.urlshortener.service.exception.ShortUrlConcurrentModificationException;
+import com.schwab.urlshortener.service.exception.ShortUrlExpiredException;
 import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
 import com.schwab.urlshortener.shortcode.SecureRandomShortCodeGenerator;
 import com.schwab.urlshortener.validation.UrlValidator;
@@ -18,6 +21,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
@@ -59,6 +63,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static final Map<ErrorCode, String> DETAIL = detailTexts();
 
+
     private static Map<ErrorCode, String> detailTexts() {
         Map<ErrorCode, String> texts = new EnumMap<>(ErrorCode.class);
         texts.put(ErrorCode.VALIDATION_FAILED, "The request body failed validation.");
@@ -76,6 +81,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         texts.put(ErrorCode.METHOD_NOT_ALLOWED, "The request method is not supported for this resource.");
         texts.put(ErrorCode.NOT_ACCEPTABLE, "The requested response format is not supported.");
         texts.put(ErrorCode.UNSUPPORTED_MEDIA_TYPE, "The request content type is not supported.");
+        texts.put(ErrorCode.SHORT_URL_EXPIRED, "The short URL has expired.");
         texts.put(ErrorCode.INTERNAL_ERROR, "An unexpected error occurred.");
         return texts;
     }
@@ -146,6 +152,26 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     }
 
     /**
+     * D124, D127: the exception carries only the fixed rule text, never the rejected {@code expiresAt}. The service
+     * logged at DEBUG.
+     */
+    @ExceptionHandler(InvalidExpirationException.class)
+    ResponseEntity<ProblemDetail> handleInvalidExpiration(InvalidExpirationException ex, HttpServletRequest request) {
+        return respond(ProblemDetails.of(ErrorCode.VALIDATION_FAILED, DETAIL.get(ErrorCode.VALIDATION_FAILED),
+                request.getRequestURI(), List.of(new FieldViolation("expiresAt", ex.rule()))));
+    }
+
+    /**
+     * D114: a PATCH with neither field, or with {@code "active": null}. The body is exactly what the former
+     * {@code @NotNull} constraint on {@code active} produced, so existing clients see no change.
+     */
+    @ExceptionHandler(InvalidUpdateRequestException.class)
+    ResponseEntity<ProblemDetail> handleInvalidUpdateRequest(HttpServletRequest request) {
+        return respond(ProblemDetails.of(ErrorCode.VALIDATION_FAILED, DETAIL.get(ErrorCode.VALIDATION_FAILED),
+                request.getRequestURI(), List.of(new FieldViolation("active", "must not be null"))));
+    }
+
+    /**
      * D99: parameter errors carry only a fixed parameter name and rule text, never the submitted value. Nothing is
      * logged here; the service logged at DEBUG.
      */
@@ -177,6 +203,17 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler({ShortUrlNotFoundException.class, ShortUrlDeletedException.class})
     ResponseEntity<ProblemDetail> handleShortUrlNotFound(HttpServletRequest request) {
         return respond(plain(ErrorCode.SHORT_URL_NOT_FOUND, request));
+    }
+
+    /**
+     * D109, D110, D119: the redirect of an expired link. {@code no-store} because 410 is heuristically cacheable
+     * and the owner may still extend the link (D115). HEAD gets the same status and headers with no body. The
+     * service logged.
+     */
+    @ExceptionHandler(ShortUrlExpiredException.class)
+    ResponseEntity<ProblemDetail> handleShortUrlExpired(HttpServletRequest request) {
+        ProblemDetail problem = plain(ErrorCode.SHORT_URL_EXPIRED, request);
+        return ResponseEntity.status(problem.getStatus()).cacheControl(CacheControl.noStore()).body(problem);
     }
 
     /** D26: a client outcome, so nothing is logged. */

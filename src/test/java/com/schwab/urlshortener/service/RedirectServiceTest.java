@@ -276,15 +276,17 @@ class RedirectServiceTest {
     }
 
     @Test
-    void shouldNeverTouchTheRecorderOrTheClockWhenResolvingWithoutRecording() {
-        Clock untouchedClock = mock(Clock.class);
-        RedirectService headService = new RedirectService(repository, transactionManager, clickRecorder,
-                untouchedClock);
+    void shouldNeverTouchTheRecorderAndReadTheClockOnceWhenResolvingWithoutRecording() {
+        // D111: HEAD must decide expiry, so it reads the clock (once); it still never records (D18).
+        Clock headClock = mock(Clock.class);
+        when(headClock.instant()).thenReturn(CLICK_AT);
+        RedirectService headService = new RedirectService(repository, transactionManager, clickRecorder, headClock);
         stored("abc1234", "https://example.com/x", ShortUrlStatus.ACTIVE);
 
         assertThat(headService.resolve("abc1234")).isEqualTo("https://example.com/x");
 
-        verifyNoInteractions(clickRecorder, untouchedClock);
+        verifyNoInteractions(clickRecorder);
+        verify(headClock, times(1)).instant();
         // Positive control: the same link through the recording method does reach the recorder.
         service.resolveAndRecordClick("abc1234");
         verify(clickRecorder, times(1)).record(LINK_ID, CLICK_AT);
@@ -382,18 +384,21 @@ class RedirectServiceTest {
     }
 
     @Test
-    void shouldFailOpenWhenTheClockItselfFails() {
+    void shouldFailTheRedirectWithoutRecordingOrLoggingTheUrlWhenTheClockFails() {
+        // D111: expiry cannot be decided without "now", so a clock failure is no longer failed open (US-016). The
+        // clock is read before the lookup; nothing is recorded and the URL never reaches the log.
         Clock failingClock = mock(Clock.class);
         when(failingClock.instant()).thenThrow(new IllegalStateException("clock broken " + URL_MARKER));
         RedirectService failing = new RedirectService(repository, transactionManager, clickRecorder, failingClock);
         stored("abc1234", URL_MARKER, ShortUrlStatus.ACTIVE);
 
-        assertThat(failing.resolveAndRecordClick("abc1234")).isEqualTo(URL_MARKER);
+        assertThatThrownBy(() -> failing.resolveAndRecordClick("abc1234")).isInstanceOf(IllegalStateException.class);
 
         verifyNoInteractions(clickRecorder);
-        assertThat(logs.list).hasSize(1);
-        assertThat(logs.list.get(0).getLevel()).isEqualTo(Level.WARN);
-        assertThat(logged()).contains("exception=IllegalStateException").doesNotContain("marker");
+        assertThat(logs.list).isEmpty();
+        // Positive control: the same link with a working clock redirects and records.
+        assertThat(service.resolveAndRecordClick("abc1234")).isEqualTo(URL_MARKER);
+        verify(clickRecorder, times(1)).record(LINK_ID, CLICK_AT);
     }
 
     @Test

@@ -892,3 +892,9 @@ Other tests: `*IT` rows of the Tests-required table are `shouldBucketBy...` (DST
 
 | Round | ID | Severity | Finding | Resolution |
 |---|---|---|---|---|
+
+## Post-completion change (engineer-approved at the US-016 G2; D106–D127; main session, US-016)
+
+- `StatsPeriodTest.shouldSumTheDailyCountsIntoClicksInRange` — **updated**: `ShortUrlStats.of` takes the expiry and the `expired` flag.
+- `ShortUrlStatsWebMvcTest`, `StatsIT` and `StatsSteps` — **updated** class-level `STATS_KEYS` (two added keys).
+- `OpenApiDocsIT.shouldDocumentTheStats200AsJsonOnlyWithTheD101FieldsAndTheDailyEntryShape` — **updated**: `expiresAt` and `expired`.

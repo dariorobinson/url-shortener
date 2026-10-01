@@ -34,7 +34,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 class CreateShortUrlIT extends IntegrationTestBase {
 
     private static final Set<String> RESOURCE_KEYS = new TreeSet<>(Set.of("shortCode", "shortUrl", "originalUrl",
-            "status", "customAlias", "clickCount", "createdAt", "lastAccessedAt"));
+            "status", "customAlias", "clickCount", "createdAt", "lastAccessedAt",
+            "expiresAt", "expired"));
     private static final Set<String> PROBLEM_KEYS = new TreeSet<>(Set.of("type", "title", "status", "detail",
             "instance", "errorCode"));
     private static final Set<String> PROBLEM_WITH_ERRORS_KEYS;

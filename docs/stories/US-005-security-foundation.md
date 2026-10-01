@@ -936,3 +936,7 @@ Round 2:
 ### Proposed review rules (senior-engineer, final re-review)
 1. "Every new endpoint in a story names the filter-chain rule that admits it. With `denyAll` as the default (D57), an unlisted path is refused even to ADMIN."
 2. "Test counts in story logs come from the Surefire and Failsafe XML reports of a `clean verify` run, never carried over from an earlier round."
+
+## Post-completion change (engineer-approved at the US-016 G2; D106–D127; main session, US-016)
+
+- Pointer: `ErrorCodeTest` gained `SHORT_URL_EXPIRED`; listed in US-006, which owns the catalogue test.

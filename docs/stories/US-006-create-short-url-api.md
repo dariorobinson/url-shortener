@@ -940,3 +940,13 @@ Round 2:
   - **Unchanged:** every other test in the class.
 - **QA-owned support edit made in US-011 (qa-tester)**
   - **`support/ApiClient`:** added `headersExceptFraming(HttpResponse)` (drops Date, Content-Length, Transfer-Encoding and Connection; a static constant set and `Locale.ROOT` are used) and the `Locale` import. No existing method changed, so no US-006 test is affected.
+
+## Post-completion change (engineer-approved at the US-016 G2; D106–D127; main session, US-016)
+
+- `ErrorCodeTest.shouldContainExactlyTheD31AndD61CatalogueInOrder` — **renamed** to `shouldContainExactlyTheD31D61AndD109CatalogueInOrder` and **updated**: `SHORT_URL_EXPIRED` appended.
+- `ErrorCodeTest.shouldMapEachCodeToItsFixedHttpStatus` — **updated**: `SHORT_URL_EXPIRED` → 410.
+- `ShortUrlControllerWebMvcTest.shouldReturn201WithRelativeLocationAndTheExactEightFieldResource` — **renamed** to `shouldReturn201WithRelativeLocationAndTheExactTenFieldResource`; the shared `RESOURCE_KEYS` constant now includes `expiresAt` and `expired`.
+- `CreateShortUrlIT` and `CreateShortUrlSteps` — **updated** class-level `RESOURCE_KEYS` constants (two added keys); no test method changed.
+- `OpenApiDocsIT.shouldDescribeCreateRequestBodyWithOriginalUrlRequiredAndAliasOptional` — **renamed** to `shouldDescribeCreateRequestBodyWithOriginalUrlRequiredAndAliasAndExpiresAtOptional` and **updated**: `expiresAt` property (date-time), not required.
+- `OpenApiDocsIT.shouldDescribe201AsJsonOnlyWithTheEightFieldResourceAndLocationHeader` — **renamed** to `shouldDescribe201AsJsonOnlyWithTheTenFieldResourceAndLocationHeader` and **updated**.
+- `ShortUrlServiceTest.serviceWithMaxAttempts` (helper) and three direct constructions — **updated**: the constructor takes an `ExpirationPolicy`.

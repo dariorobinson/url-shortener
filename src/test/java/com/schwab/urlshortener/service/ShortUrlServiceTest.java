@@ -20,6 +20,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.schwab.urlshortener.config.ExpirationProperties;
 import com.schwab.urlshortener.config.ShortCodeProperties;
 import com.schwab.urlshortener.domain.ShortUrl;
 import com.schwab.urlshortener.domain.ShortUrlStatus;
@@ -42,6 +43,7 @@ import java.lang.reflect.Method;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.Period;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Arrays;
@@ -77,6 +79,9 @@ import org.springframework.transaction.annotation.Transactional;
  * Spring context, no database.
  */
 class ShortUrlServiceTest {
+
+    private static final ExpirationPolicy EXPIRATION =
+            new ExpirationPolicy(new ExpirationProperties(Period.ofYears(10)));
 
     private static final String URL = "https://example.com/page";
     private static final Instant NOW = Instant.parse("2026-09-29T14:03:12.123456789Z");
@@ -117,7 +122,8 @@ class ShortUrlServiceTest {
 
     private ShortUrlService serviceWithMaxAttempts(int maxAttempts) {
         return new ShortUrlService(repository, clickEvents, generator, new UrlValidator("https://short.example"),
-                new AliasPolicy(List.of()), clock, new ShortCodeProperties(7, maxAttempts), transactionManager);
+                new AliasPolicy(List.of()), EXPIRATION, clock,
+                new ShortCodeProperties(7, maxAttempts), transactionManager);
     }
 
     private static CreateShortUrlCommand generated(String url) {
@@ -706,7 +712,7 @@ class ShortUrlServiceTest {
         assertThat(logs.list).isEmpty();
     }
 
-    // ---- US-009: setActive (AC1-AC4, AC7-AC11, D26, D35)
+    // ---- US-009: update with active only (AC1-AC4, AC7-AC11, D26, D35)
 
     private static String joined(ListAppender<ILoggingEvent> appender) {
         return String.join("\n", appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList());
@@ -717,7 +723,7 @@ class ShortUrlServiceTest {
     void shouldDeactivateAnActiveLinkForItsOwnerOrAnAdminAndFlushExactlyOnce(String username, boolean admin) {
         ShortUrl url = stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
 
-        ShortUrlView view = service.setActive("Abc1234", false, new Caller(username, admin));
+        ShortUrlView view = service.update("Abc1234", UpdateShortUrlCommand.active(false), new Caller(username, admin));
 
         assertThat(view.status()).isEqualTo(ShortUrlStatus.DEACTIVATED);
         assertThat(view.shortCode()).isEqualTo("Abc1234");
@@ -732,7 +738,7 @@ class ShortUrlServiceTest {
     void shouldReactivateADeactivatedLinkForItsOwnerOrAnAdmin(String username, boolean admin) {
         ShortUrl url = stored("Abc1234", "alice", ShortUrlStatus.DEACTIVATED);
 
-        ShortUrlView view = service.setActive("Abc1234", true, new Caller(username, admin));
+        ShortUrlView view = service.update("Abc1234", UpdateShortUrlCommand.active(true), new Caller(username, admin));
 
         assertThat(view.status()).isEqualTo(ShortUrlStatus.ACTIVE);
         assertThat(url.getStatus()).isEqualTo(ShortUrlStatus.ACTIVE);
@@ -745,8 +751,10 @@ class ShortUrlServiceTest {
     void shouldLetAnAdminChangeAnotherUsersLinkInBothDirections() {
         stored("Abc1234", "bob", ShortUrlStatus.ACTIVE);
 
-        assertThat(service.setActive("Abc1234", false, ADMIN).status()).isEqualTo(ShortUrlStatus.DEACTIVATED);
-        assertThat(service.setActive("Abc1234", true, ADMIN).status()).isEqualTo(ShortUrlStatus.ACTIVE);
+        assertThat(service.update("Abc1234", UpdateShortUrlCommand.active(false), ADMIN).status())
+                .isEqualTo(ShortUrlStatus.DEACTIVATED);
+        assertThat(service.update("Abc1234", UpdateShortUrlCommand.active(true), ADMIN).status())
+                .isEqualTo(ShortUrlStatus.ACTIVE);
         verify(repository, times(2)).flush();
     }
 
@@ -756,7 +764,7 @@ class ShortUrlServiceTest {
         ReflectionTestUtils.setField(url, "clickCount", 7L);
         ReflectionTestUtils.setField(url, "lastAccessedAt", NOW_MICROS);
 
-        ShortUrlView view = service.setActive("Abc1234", false, ALICE);
+        ShortUrlView view = service.update("Abc1234", UpdateShortUrlCommand.active(false), ALICE);
 
         assertThat(view.clickCount()).isEqualTo(7L);
         assertThat(view.lastAccessedAt()).isEqualTo(NOW_MICROS);
@@ -766,7 +774,7 @@ class ShortUrlServiceTest {
     void shouldRunTheStepsInOrderGetTransactionFindFlushCommit() {
         stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
 
-        service.setActive("Abc1234", false, ALICE);
+        service.update("Abc1234", UpdateShortUrlCommand.active(false), ALICE);
 
         InOrder order = inOrder(transactionManager, repository);
         order.verify(transactionManager).getTransaction(any());
@@ -778,13 +786,13 @@ class ShortUrlServiceTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {true, false})
-    void shouldRunSetActiveAndDeleteInARequiredReadWriteTransaction(boolean deleteInstead) {
+    void shouldRunUpdateAndDeleteInARequiredReadWriteTransaction(boolean deleteInstead) {
         stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
 
         if (deleteInstead) {
             service.delete("Abc1234", ADMIN);
         } else {
-            service.setActive("Abc1234", false, ALICE);
+            service.update("Abc1234", UpdateShortUrlCommand.active(false), ALICE);
         }
 
         ArgumentCaptor<TransactionDefinition> definition = ArgumentCaptor.forClass(TransactionDefinition.class);
@@ -802,8 +810,10 @@ class ShortUrlServiceTest {
 
         Class<? extends Exception> expected = active
                 ? ShortUrlAlreadyActiveException.class : ShortUrlAlreadyDeactivatedException.class;
-        assertThatThrownBy(() -> service.setActive("Abc1234", active, ALICE)).isExactlyInstanceOf(expected);
-        assertThatThrownBy(() -> service.setActive("Abc1234", active, ADMIN)).isExactlyInstanceOf(expected);
+        assertThatThrownBy(() -> service.update("Abc1234", UpdateShortUrlCommand.active(active), ALICE))
+                .isExactlyInstanceOf(expected);
+        assertThatThrownBy(() -> service.update("Abc1234", UpdateShortUrlCommand.active(active), ADMIN))
+                .isExactlyInstanceOf(expected);
 
         assertThat(url.getStatus()).isEqualTo(current);
         assertThat(url.getUpdatedAt()).isEqualTo(updatedBefore);
@@ -812,7 +822,7 @@ class ShortUrlServiceTest {
         verify(transactionManager, never()).commit(any());
         // Positive control: the opposite transition on the same kind of row does write.
         ShortUrl other = stored("Xyz9876", "alice", current);
-        service.setActive("Xyz9876", !active, ALICE);
+        service.update("Xyz9876", UpdateShortUrlCommand.active(!active), ALICE);
         assertThat(other.getStatus()).isNotEqualTo(current);
         verify(repository, times(1)).flush();
     }
@@ -822,9 +832,9 @@ class ShortUrlServiceTest {
     void shouldThrowNotFoundAndNeverFlushForANonOwnerUserInBothDirections(ShortUrlStatus current) {
         ShortUrl url = stored("Abc1234", "alice", current);
 
-        assertThatThrownBy(() -> service.setActive("Abc1234", true, BOB))
+        assertThatThrownBy(() -> service.update("Abc1234", UpdateShortUrlCommand.active(true), BOB))
                 .isExactlyInstanceOf(ShortUrlNotFoundException.class);
-        assertThatThrownBy(() -> service.setActive("Abc1234", false, BOB))
+        assertThatThrownBy(() -> service.update("Abc1234", UpdateShortUrlCommand.active(false), BOB))
                 .isExactlyInstanceOf(ShortUrlNotFoundException.class);
 
         assertThat(url.getStatus()).isEqualTo(current);
@@ -839,7 +849,7 @@ class ShortUrlServiceTest {
 
         for (Caller caller : List.of(ALICE, BOB, ADMIN)) {
             for (boolean active : new boolean[] {true, false}) {
-                assertThatThrownBy(() -> service.setActive("Abc1234", active, caller))
+                assertThatThrownBy(() -> service.update("Abc1234", UpdateShortUrlCommand.active(active), caller))
                         .isExactlyInstanceOf(ShortUrlNotFoundException.class);
             }
         }
@@ -853,9 +863,9 @@ class ShortUrlServiceTest {
     void shouldThrowNotFoundForAnUnknownCodeInBothDirections() {
         when(repository.findByShortCode("Nope123")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.setActive("Nope123", false, ALICE))
+        assertThatThrownBy(() -> service.update("Nope123", UpdateShortUrlCommand.active(false), ALICE))
                 .isInstanceOf(ShortUrlNotFoundException.class);
-        assertThatThrownBy(() -> service.setActive("Nope123", true, ADMIN))
+        assertThatThrownBy(() -> service.update("Nope123", UpdateShortUrlCommand.active(true), ADMIN))
                 .isInstanceOf(ShortUrlNotFoundException.class);
 
         verify(repository, never()).flush();
@@ -864,9 +874,11 @@ class ShortUrlServiceTest {
     @ParameterizedTest
     @NullSource
     @ValueSource(strings = {"", "ab", "abcdefghijklmnopqrstuvwxyzABCDEFG", "a-b", "abc ", "abcé", "abc\n"})
-    void shouldThrowNotFoundWithoutAnyRepositoryCallForAMalformedCodeOnSetActive(String code) {
-        assertThatThrownBy(() -> service.setActive(code, false, ALICE)).isInstanceOf(ShortUrlNotFoundException.class);
-        assertThatThrownBy(() -> service.setActive(code, true, ADMIN)).isInstanceOf(ShortUrlNotFoundException.class);
+    void shouldThrowNotFoundWithoutAnyRepositoryCallForAMalformedCodeOnUpdate(String code) {
+        assertThatThrownBy(() -> service.update(code, UpdateShortUrlCommand.active(false), ALICE))
+                .isInstanceOf(ShortUrlNotFoundException.class);
+        assertThatThrownBy(() -> service.update(code, UpdateShortUrlCommand.active(true), ADMIN))
+                .isInstanceOf(ShortUrlNotFoundException.class);
 
         verifyNoInteractions(repository);
     }
@@ -876,11 +888,11 @@ class ShortUrlServiceTest {
         Clock counting = mock(Clock.class);
         when(counting.instant()).thenReturn(NOW);
         ShortUrlService counted = new ShortUrlService(repository, clickEvents, generator,
-                new UrlValidator("https://short.example"), new AliasPolicy(List.of()), counting,
+                new UrlValidator("https://short.example"), new AliasPolicy(List.of()), EXPIRATION, counting,
                 new ShortCodeProperties(7, 5), transactionManager);
         stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
 
-        counted.setActive("Abc1234", false, ALICE);
+        counted.update("Abc1234", UpdateShortUrlCommand.active(false), ALICE);
 
         verify(counting, times(1)).instant();
     }
@@ -890,7 +902,7 @@ class ShortUrlServiceTest {
         Clock counting = mock(Clock.class);
         when(counting.instant()).thenReturn(NOW);
         ShortUrlService counted = new ShortUrlService(repository, clickEvents, generator,
-                new UrlValidator("https://short.example"), new AliasPolicy(List.of()), counting,
+                new UrlValidator("https://short.example"), new AliasPolicy(List.of()), EXPIRATION, counting,
                 new ShortCodeProperties(7, 5), transactionManager);
         stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
 
@@ -908,7 +920,7 @@ class ShortUrlServiceTest {
                 new ObjectOptimisticLockingFailureException(ShortUrl.class, 1L);
         doThrow(conflict).when(repository).flush();
 
-        assertThatThrownBy(() -> service.setActive("Abc1234", false, ALICE))
+        assertThatThrownBy(() -> service.update("Abc1234", UpdateShortUrlCommand.active(false), ALICE))
                 .isExactlyInstanceOf(ShortUrlConcurrentModificationException.class)
                 .hasCause(conflict)
                 .hasMessage("Short URL was modified concurrently");
@@ -925,7 +937,7 @@ class ShortUrlServiceTest {
                 new JpaOptimisticLockingFailureException(new OptimisticLockException());
         doThrow(conflict).when(repository).flush();
 
-        assertThatThrownBy(() -> service.setActive("Abc1234", false, ALICE))
+        assertThatThrownBy(() -> service.update("Abc1234", UpdateShortUrlCommand.active(false), ALICE))
                 .isExactlyInstanceOf(ShortUrlConcurrentModificationException.class)
                 .hasCause(conflict);
     }
@@ -936,7 +948,7 @@ class ShortUrlServiceTest {
         OptimisticLockingFailureException conflict = new OptimisticLockingFailureException("stale");
         doThrow(conflict).when(repository).flush();
 
-        assertThatThrownBy(() -> service.setActive("Abc1234", false, ALICE))
+        assertThatThrownBy(() -> service.update("Abc1234", UpdateShortUrlCommand.active(false), ALICE))
                 .isExactlyInstanceOf(ShortUrlConcurrentModificationException.class)
                 .hasCause(conflict);
     }
@@ -948,7 +960,7 @@ class ShortUrlServiceTest {
                 new ObjectOptimisticLockingFailureException(ShortUrl.class, 1L);
         doThrow(conflict).when(transactionManager).commit(transactionStatus);
 
-        assertThatThrownBy(() -> service.setActive("Abc1234", false, ALICE))
+        assertThatThrownBy(() -> service.update("Abc1234", UpdateShortUrlCommand.active(false), ALICE))
                 .isExactlyInstanceOf(ShortUrlConcurrentModificationException.class)
                 .hasCause(conflict);
 
@@ -962,7 +974,8 @@ class ShortUrlServiceTest {
         DataAccessResourceFailureException outage = new DataAccessResourceFailureException("db down");
         doThrow(outage).when(repository).flush();
 
-        assertThatThrownBy(() -> service.setActive("Abc1234", false, ALICE)).isSameAs(outage);
+        assertThatThrownBy(() -> service.update("Abc1234", UpdateShortUrlCommand.active(false), ALICE))
+                .isSameAs(outage);
     }
 
     @Test
@@ -971,7 +984,7 @@ class ShortUrlServiceTest {
         DataIntegrityViolationException check = violation("23514", "ck_short_url_deleted_consistency");
         doThrow(check).when(repository).flush();
 
-        assertThatThrownBy(() -> service.setActive("Abc1234", false, ALICE)).isSameAs(check);
+        assertThatThrownBy(() -> service.update("Abc1234", UpdateShortUrlCommand.active(false), ALICE)).isSameAs(check);
     }
 
     @Test
@@ -1098,8 +1111,8 @@ class ShortUrlServiceTest {
         stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
         stored("Del1234", "alice", ShortUrlStatus.ACTIVE);
 
-        service.setActive("Abc1234", false, ALICE);
-        service.setActive("Abc1234", true, ALICE);
+        service.update("Abc1234", UpdateShortUrlCommand.active(false), ALICE);
+        service.update("Abc1234", UpdateShortUrlCommand.active(true), ALICE);
         service.delete("Del1234", ADMIN);
 
         List<String> messages = logs.list.stream().filter(e -> e.getLevel() == Level.INFO)
@@ -1118,9 +1131,9 @@ class ShortUrlServiceTest {
         stored("Abc1234", "alice", ShortUrlStatus.ACTIVE);
         doThrow(new ObjectOptimisticLockingFailureException(ShortUrl.class, 1L)).when(repository).flush();
 
-        assertThatThrownBy(() -> service.setActive("Abc1234", false, ALICE))
+        assertThatThrownBy(() -> service.update("Abc1234", UpdateShortUrlCommand.active(false), ALICE))
                 .isInstanceOf(ShortUrlConcurrentModificationException.class);
-        assertThatThrownBy(() -> service.setActive("Abc1234", true, ALICE))
+        assertThatThrownBy(() -> service.update("Abc1234", UpdateShortUrlCommand.active(true), ALICE))
                 .isInstanceOf(ShortUrlConcurrentModificationException.class);
         assertThatThrownBy(() -> service.delete("Abc1234", ADMIN))
                 .isInstanceOf(ShortUrlConcurrentModificationException.class);
@@ -1143,7 +1156,7 @@ class ShortUrlServiceTest {
         doThrow(new ObjectOptimisticLockingFailureException(ShortUrl.class, 1L))
                 .when(transactionManager).commit(transactionStatus);
 
-        assertThatThrownBy(() -> service.setActive("Abc1234", false, ALICE))
+        assertThatThrownBy(() -> service.update("Abc1234", UpdateShortUrlCommand.active(false), ALICE))
                 .isInstanceOf(ShortUrlConcurrentModificationException.class);
         assertThatThrownBy(() -> service.delete("Del1234", ADMIN))
                 .isInstanceOf(ShortUrlConcurrentModificationException.class);
@@ -1158,7 +1171,7 @@ class ShortUrlServiceTest {
     void shouldLogNothingAtInfoForARedundantTransition() {
         stored("Abc1234", "alice", ShortUrlStatus.DEACTIVATED);
 
-        assertThatThrownBy(() -> service.setActive("Abc1234", false, ALICE))
+        assertThatThrownBy(() -> service.update("Abc1234", UpdateShortUrlCommand.active(false), ALICE))
                 .isInstanceOf(ShortUrlAlreadyDeactivatedException.class);
 
         assertThat(logs.list).noneSatisfy(e -> assertThat(e.getLevel().isGreaterOrEqual(Level.INFO)).isTrue());
@@ -1244,7 +1257,7 @@ class ShortUrlServiceTest {
     void shouldDefaultToUtcDaysEvenWhenTheInjectedClockHasAnotherZone() {
         Clock tokyo = Clock.fixed(Instant.parse("2026-03-10T20:00:00Z"), ZoneId.of("Asia/Tokyo"));
         ShortUrlService inTokyo = new ShortUrlService(repository, clickEvents, generator,
-                new UrlValidator("https://short.example"), new AliasPolicy(List.of()), tokyo,
+                new UrlValidator("https://short.example"), new AliasPolicy(List.of()), EXPIRATION, tokyo,
                 new ShortCodeProperties(7, 5), transactionManager);
         storedWithClicks("Abc1234", "alice", ShortUrlStatus.ACTIVE);
         when(clickEvents.countClicksPerDay(eq(STATS_ID), anyList(), any(Instant.class))).thenReturn(List.of());
@@ -1280,7 +1293,7 @@ class ShortUrlServiceTest {
         Clock counting = mock(Clock.class);
         when(counting.instant()).thenReturn(NOW);
         ShortUrlService counted = new ShortUrlService(repository, clickEvents, generator,
-                new UrlValidator("https://short.example"), new AliasPolicy(List.of()), counting,
+                new UrlValidator("https://short.example"), new AliasPolicy(List.of()), EXPIRATION, counting,
                 new ShortCodeProperties(7, 5), transactionManager);
         storedWithClicks("Abc1234", "alice", ShortUrlStatus.ACTIVE);
         when(clickEvents.countClicksPerDay(eq(STATS_ID), anyList(), any(Instant.class))).thenReturn(List.of());

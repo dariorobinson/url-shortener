@@ -34,7 +34,8 @@ public class StatsSteps {
 
     private static final String BASE = "/api/v1/urls/";
     private static final Set<String> STATS_KEYS = Set.of("shortCode", "timezone", "from", "to", "totalClicks",
-            "clicksInRange", "lastAccessedAt", "daily");
+            "clicksInRange", "lastAccessedAt", "daily",
+            "expiresAt", "expired");
     private static final Set<String> PROBLEM_KEYS = Set.of("type", "title", "status", "detail", "instance",
             "errorCode");
     private static final List<String> FIXED_TEXTS = List.of(StatsPeriod.TIMEZONE_RULE, StatsPeriod.DATE_RULE,

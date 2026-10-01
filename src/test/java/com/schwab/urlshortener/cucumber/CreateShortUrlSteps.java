@@ -39,7 +39,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 public class CreateShortUrlSteps {
 
     private static final Set<String> RESOURCE_KEYS = Set.of("shortCode", "shortUrl", "originalUrl", "status",
-            "customAlias", "clickCount", "createdAt", "lastAccessedAt");
+            "customAlias", "clickCount", "createdAt", "lastAccessedAt",
+            "expiresAt", "expired");
     private static final Set<String> RESERVED = Set.of("api", "actuator", "v3", "error", "health", "admin",
             "login", "logout", "static", "assets", "docs");
     private static final List<String> INTERNAL_MARKERS = List.of("Exception", "com.fasterxml", "com.schwab",

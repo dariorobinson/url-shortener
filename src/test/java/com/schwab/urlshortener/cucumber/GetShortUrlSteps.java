@@ -31,7 +31,8 @@ public class GetShortUrlSteps {
 
     private static final String BASE = "/api/v1/urls/";
     private static final Set<String> RESOURCE_KEYS = Set.of("shortCode", "shortUrl", "originalUrl",
-            "status", "customAlias", "clickCount", "createdAt", "lastAccessedAt");
+            "status", "customAlias", "clickCount", "createdAt", "lastAccessedAt",
+            "expiresAt", "expired");
 
     @LocalServerPort
     private int port;

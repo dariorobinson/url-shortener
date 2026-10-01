@@ -11,6 +11,8 @@ import com.schwab.urlshortener.service.Caller;
 import com.schwab.urlshortener.service.CreateShortUrlCommand;
 import com.schwab.urlshortener.service.ShortUrlService;
 import com.schwab.urlshortener.service.ShortUrlView;
+import com.schwab.urlshortener.service.UpdateShortUrlCommand;
+import com.schwab.urlshortener.service.exception.InvalidUpdateRequestException;
 import com.schwab.urlshortener.service.exception.StatsParameter;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -22,6 +24,8 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -88,9 +92,11 @@ class ShortUrlController {
                     Non-ASCII (IDN) hosts are rejected with 400 INVALID_URL: clients must submit the punycode \
                     (xn--) form. An optional alias is used as the code and gives customAlias true; an alias that \
                     already exists in any status gives 409 ALIAS_ALREADY_EXISTS. Without an alias a random code \
-                    is generated. Submitting the same URL twice creates two different codes. Errors are RFC 7807 \
-                    problem documents with an errorCode; 400 responses for VALIDATION_FAILED, INVALID_URL and \
-                    INVALID_ALIAS also carry an errors array naming the field.""")
+                    is generated. Submitting the same URL twice creates two different codes. An optional expiresAt \
+                    (ISO-8601 with an explicit offset or Z, strictly in the future, at most 10 years ahead) makes the \
+                    public redirect return 410 SHORT_URL_EXPIRED from that instant; without it the link never \
+                    expires. Errors are RFC 7807 problem documents with an errorCode; 400 responses for \
+                    VALIDATION_FAILED, INVALID_URL and INVALID_ALIAS also carry an errors array naming the field.""")
     @ApiResponse(responseCode = "201", description = "Created",
             headers = @Header(name = "Location", description = "The management resource, /api/v1/urls/{shortCode}",
                     schema = @Schema(type = "string")),
@@ -124,8 +130,8 @@ class ShortUrlController {
     ResponseEntity<ShortUrlResponse> create(@Valid @RequestBody CreateShortUrlRequest request,
             @Parameter(hidden = true) Authentication authentication) {
         // authentication.getName() is the configured lowercase username, whatever case the client typed (D54).
-        ShortUrlView view = service.create(
-                new CreateShortUrlCommand(request.originalUrl(), request.alias(), authentication.getName()));
+        ShortUrlView view = service.create(new CreateShortUrlCommand(request.originalUrl(), request.alias(),
+                authentication.getName(), instantOf(request.expiresAt())));
         return ResponseEntity.created(links.location(view.shortCode())).body(ShortUrlResponse.from(view, links));
     }
 
@@ -243,9 +249,15 @@ class ShortUrlController {
     }
 
     @PatchMapping(path = "/{code}", consumes = MediaType.APPLICATION_JSON_VALUE)   // D88: application/json only
-    @Operation(summary = "Deactivate or reactivate a short URL",
+    @Operation(summary = "Deactivate or reactivate a short URL, or change its expiry",
             description = """
-                    Body {"active": false} deactivates the short URL and {"active": true} reactivates it. Only the \
+                    Body {"active": false} deactivates the short URL and {"active": true} reactivates it. \
+                    {"expiresAt": "..."} sets, extends or shortens the expiry (strictly in the future, at most 10 \
+                    years ahead); {"expiresAt": null} clears it; omitting expiresAt leaves it unchanged. Both \
+                    fields may be sent together; a body with neither gives 400 VALIDATION_FAILED. Extending or \
+                    clearing the expiry of an expired link makes it redirect again. Setting the expiry it already \
+                    has changes nothing. If active is redundant, the whole request fails with 409 and nothing is \
+                    applied. Only the \
                     creator or an ADMIN may do it; anyone else gets the same 404 SHORT_URL_NOT_FOUND as for an \
                     unknown, malformed or deleted code. A deactivated link's public redirect returns 404 until it \
                     is reactivated. Only a JSON boolean is accepted for active: a string or a number gives 400 \
@@ -287,7 +299,12 @@ class ShortUrlController {
                     schema = @Schema(implementation = ErrorResponseSchema.class)))
     ShortUrlResponse update(@PathVariable("code") String code, @Valid @RequestBody UpdateShortUrlRequest request,
             @Parameter(hidden = true) Authentication authentication) {
-        return ShortUrlResponse.from(service.setActive(code, request.active(), callerOf(authentication)), links);
+        if ((!request.hasActive() && !request.hasExpiresAt()) || (request.hasActive() && request.getActive() == null)) {
+            throw new InvalidUpdateRequestException();                      // D114: checked before any lookup
+        }
+        UpdateShortUrlCommand command = new UpdateShortUrlCommand(request.getActive(), request.hasExpiresAt(),
+                instantOf(request.getExpiresAt()));
+        return ShortUrlResponse.from(service.update(code, command, callerOf(authentication)), links);
     }
 
     @DeleteMapping("/{code}")
@@ -331,6 +348,10 @@ class ShortUrlController {
      * {@code getAuthorities()} holds {@code ROLE_ADMIN} alone for the admin (never the implied {@code ROLE_USER}).
      * The username is the configured lowercase name, whatever case the client typed (D54).
      */
+    private static Instant instantOf(OffsetDateTime dateTime) {
+        return dateTime == null ? null : dateTime.toInstant();
+    }
+
     static Caller callerOf(Authentication authentication) {
         boolean admin = authentication.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)

@@ -35,7 +35,8 @@ class GetShortUrlIT extends IntegrationTestBase {
     private static final String NO_STORE = "no-cache, no-store, max-age=0, must-revalidate";
     private static final Instant SEEDED_LAST_ACCESS = Instant.parse("2026-03-01T10:15:30Z");
     private static final Set<String> RESOURCE_KEYS = Set.of("shortCode", "shortUrl", "originalUrl",
-            "status", "customAlias", "clickCount", "createdAt", "lastAccessedAt");
+            "status", "customAlias", "clickCount", "createdAt", "lastAccessedAt",
+            "expiresAt", "expired");
     private static final Set<String> PROBLEM_KEYS = Set.of("type", "title", "status", "detail",
             "instance", "errorCode");
 

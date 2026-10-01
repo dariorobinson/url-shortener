@@ -1,7 +1,9 @@
 package com.schwab.urlshortener.api.dto;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
+import java.time.OffsetDateTime;
 
 /**
  * Body of {@code POST /api/v1/urls}. Bean Validation is structural only: every other rule belongs to
@@ -21,5 +23,10 @@ public record CreateShortUrlRequest(
         @Schema(description = "Optional custom alias, used as the short code: 3 to 32 characters from A-Z, a-z "
                 + "and 0-9, case-sensitive, not a reserved word. Omit or send null to have a code generated.",
                 pattern = "^[A-Za-z0-9]{3,32}$", nullable = true, example = "promo2026")
-        String alias) {
+        String alias,
+        @Schema(description = "Optional expiry: an ISO-8601 date-time with an explicit offset or Z, strictly in the "
+                + "future and at most 10 years ahead. Omit or send null for a link that never expires. Numbers "
+                + "and date-times without an offset are rejected.", type = "string", format = "date-time",
+                nullable = true, example = "2027-01-31T23:59:59Z")
+        @JsonDeserialize(using = StrictOffsetDateTimeDeserializer.class) OffsetDateTime expiresAt) {
 }

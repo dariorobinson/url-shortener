@@ -177,7 +177,7 @@ com.schwab.urlshortener
                        #   ClickEventRepository.countClicksPerDay (designed (US-011), design approved (G2))
 ```
 
-## Database schema (V1 *implemented (US-002)*, amended by D47; V2 *implemented (US-010)*)
+## Database schema (V1 *implemented (US-002)*, amended by D47; V2 *implemented (US-010)*; V3 *implemented (US-016)*)
 
 **V1 — short_url** (`V1__create_short_url.sql`). The SQL below is the approved schema.
 - `ck_short_url_deleted_consistency` was tightened at the US-002 design gate (D44). The original `(status = 'DELETED') = (both set)` form accepted a non-deleted row with only one audit field set.
@@ -235,7 +235,15 @@ CREATE INDEX ix_click_event_short_url_id_clicked_at ON click_event (short_url_id
 - The FK uses the default NO ACTION. Links are soft-deleted (D1), so a hard delete of a clicked link is refused.
 - V2 adds no CHECK to `short_url` (D85).
 
-**V3 — expiration** is designed after the brownfield impact analysis (Scenario 2).
+**V3 — expiration** (*implemented (US-016)*, D106, D107, D112):
+
+```sql
+ALTER TABLE short_url ADD COLUMN expires_at TIMESTAMPTZ NULL;
+ALTER TABLE short_url ADD CONSTRAINT ck_short_url_expires_after_created
+  CHECK (expires_at IS NULL OR expires_at > created_at);
+```
+
+`NULL` means the link never expires; every row that existed before V3 is `NULL`. Expiry is computed at request time (`now >= expires_at`, D111); there is no `EXPIRED` status and no scheduled job. "Strictly in the future" and the 10-year horizon depend on the clock and on configuration, so they are enforced by the application (`ExpirationPolicy`); the CHECK holds the one timeless rule.
 
 ## Domain model — *implemented (US-002)*
 
@@ -365,7 +373,7 @@ The full detail is in the US-009 Design note. There is no migration, and `Securi
   - `softDelete(username, clock)`, where `deleted_by` is the configured admin username (D51).
   - Deleting a DEACTIVATED link is allowed; a DELETED or unknown code gets 404.
   - The code is never reused: a create with it gets `409 ALIAS_ALREADY_EXISTS`.
-- **Service:** `ShortUrlService.setActive(code, active, caller)` and `delete(code, caller)`. `delete` first checks `caller.admin()` as a guard behind rule 5, throwing `IllegalStateException`. Both reuse `loadVisible` unchanged, then call the entity transition. `updated_at`/`deleted_at` come from the injected `Clock` (D45).
+- **Service:** `ShortUrlService.update(code, UpdateShortUrlCommand, caller)` (named `setActive` until US-016 generalised it) and `delete(code, caller)`. `delete` first checks `caller.admin()` as a guard behind rule 5, throwing `IllegalStateException`. Both reuse `loadVisible` unchanged, then call the entity transition. `updated_at`/`deleted_at` come from the injected `Clock` (D45).
 - **Transactions:**
   - A third constructor-built `TransactionTemplate`, `readWrite` (REQUIRED, read-write, READ COMMITTED). There is no `@Transactional`.
   - An explicit `repository.flush()` inside the callback runs the versioned `UPDATE … WHERE id = ? AND version = ?` before commit. That avoids Hibernate's managed-flush ERROR log (`HHH000346`).
@@ -379,7 +387,7 @@ The full detail is in the US-009 Design note. There is no migration, and `Securi
 - **Request parsing (D88, D89, D90):** PATCH accepts `application/json` only (other types get 415). `active` must be a real JSON boolean: `"false"`, `0` and `1` get `400 MALFORMED_REQUEST`, and a missing or null value gets `400 VALIDATION_FAILED`. Jackson's scalar coercion is disabled for the Boolean type only, through `config/JacksonConfig`, which every web slice imports via the shared slice configuration. Click data in the PATCH 200 is as read inside that transaction (D90).
 - **405 `Allow`:** a 405 on `/api/v1/urls/{code}` lists `GET, DELETE, PATCH`. Spring leaves out the implicit HEAD, although HEAD is served.
 
-### Statistics — *designed (US-011), design approved (G2); D95–D105*
+### Statistics — *implemented (US-011); D95–D105*
 
 The full detail is in the US-011 Design note. There is no migration, and `SecurityConfig` and `ErrorCode` are unchanged (D99).
 
@@ -395,6 +403,14 @@ The full detail is in the US-011 Design note. There is no migration, and `Securi
   - `from` and `to` are inclusive ISO dates in that zone, between 1970-01-01 and 9999-12-31 (D97). `to` defaults to today in the zone and `from` to `max(to − 29, 1970-01-01)`, each independently. The maximum is 366 days (D98).
 - **Response:** `{shortCode, timezone, from, to, totalClicks (click_count), clicksInRange, lastAccessedAt (UTC or null), daily: [{date, clicks}]}`. `daily` is dense (D19) and ascending (D101).
 - **Query:** see *Time zones for daily stats* below.
+
+### Expiration — *implemented (US-016)*; D106–D127
+
+- **Create:** optional `expiresAt` (ISO-8601 with an explicit offset or `Z`, parsed by `StrictOffsetDateTimeDeserializer`: numbers and offset-less date-times are `400 MALFORMED_REQUEST`, D123). `ExpirationPolicy` accepts it only if, truncated to microseconds, it is strictly after "now" and within `shortener.expiration.max-horizon` (default `P10Y`); otherwise `400 VALIDATION_FAILED` naming `expiresAt`, never echoing the value (D124). Checked after `INVALID_URL` and `INVALID_ALIAS`.
+- **PATCH:** `UpdateShortUrlRequest` is a class whose setters record presence, so `expiresAt` absent = unchanged, `null` = clear, value = set (D114, D122). A body with neither field, or `"active": null`, gets exactly the pre-US-016 `VALIDATION_FAILED` body naming `active`. `ShortUrlService.update` validates the expiry before the lookup, applies the `active` transition first (a redundant one fails the whole request, D126), writes nothing if nothing changed (D125), and keeps the single-flush / single-catch pattern (D35).
+- **Redirect:** `RedirectService` reads the clock **once**; that instant decides expiry and is the click time. Order: format → lookup → not ACTIVE (404) → expired (`410 SHORT_URL_EXPIRED`, `Cache-Control: no-store`, D109, D110, D113) → 302. HEAD gets 410 with no body and is never counted (D119). The click UPDATE also requires `expires_at IS NULL OR expires_at > :clickedAt` (D117). Because the clock is now needed to decide expiry, a clock failure fails the redirect instead of failing open.
+- **Representation:** create, details, PATCH and stats responses end with `expiresAt` (`null` = never) and `expired` (computed at the request's instant, D118). Expired links remain visible to owner and ADMIN, with their stats (D117).
+- **Unchanged:** `SecurityConfig` (no new endpoint), `ShortUrlStatus`, the stats query, and the 302 response.
 
 ### Access rules in the filter chain — *implemented (US-005)*
 
@@ -448,7 +464,7 @@ Rule: no handler other than the redirect may be mapped to a single path segment,
   - `totalClicks` is `short_url.click_count` (O(1), one writer), not `count(click_event)`. The two are equal by construction for application-written data.
   - The daily series is computed per request from `click_event` over at most 366 days. Cost grows with a link's clicks in the window; rollups remain the production roadmap item above.
 
-### Time zones for daily stats — *designed (US-011), design approved (G2); D95, D96*
+### Time zones for daily stats — *implemented (US-011); D95, D96*
 - **Recommendation (D95):** Java does all time-zone arithmetic. It validates the zone (D96), computes the start instant of every local day with `LocalDate.atStartOfDay(zone)`, and sends only instants to PostgreSQL. PostgreSQL counts the link's clicks with `width_bucket` over those day starts, as a range scan on `ix_click_event_short_url_id_clicked_at`. **No zone string is ever sent to PostgreSQL.** Java fills in the zero-click days (D19).
 - **Reason:** DST-correct (23-hour, 25-hour and skipped days), aggregation stays in the database so no click is loaded into memory, and a single zone implementation (the JDK's) decides every bucket.
 - **Alternative:** accept only IANA IDs and `UTC`, validated in Java, then group in PostgreSQL with `CAST(clicked_at AT TIME ZONE :zone AS date)`.

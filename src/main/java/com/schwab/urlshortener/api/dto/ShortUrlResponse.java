@@ -6,8 +6,9 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.Instant;
 
 /**
- * The short URL resource, shared by create (US-006), details (US-007) and update (US-009) (D58). All eight fields are
- * always present; {@code lastAccessedAt} is {@code null} until the first click. There is no
+ * The short URL resource, shared by create (US-006), details (US-007) and update (US-009) (D58). All ten fields are
+ * always present; {@code lastAccessedAt} is {@code null} until the first click and {@code expiresAt} is {@code null}
+ * for a link that never expires (D118). There is no
  * {@code createdBy}, {@code id}, {@code updatedAt} or {@code version}.
  */
 public record ShortUrlResponse(
@@ -20,11 +21,15 @@ public record ShortUrlResponse(
         @Schema(description = "Number of recorded clicks; 0 on create") long clickCount,
         @Schema(description = "Creation time, ISO-8601 UTC") Instant createdAt,
         @Schema(description = "Time of the last click, or null before the first click", nullable = true)
-        Instant lastAccessedAt) {
+        Instant lastAccessedAt,
+        @Schema(description = "When the short URL expires, ISO-8601 UTC, or null if it never expires",
+                nullable = true) Instant expiresAt,
+        @Schema(description = "True if the short URL had expired at the time of this request; its public "
+                + "redirect then returns 410 SHORT_URL_EXPIRED") boolean expired) {
 
     public static ShortUrlResponse from(ShortUrlView view, ShortUrlLinks links) {
         return new ShortUrlResponse(view.shortCode(), links.publicUrl(view.shortCode()), view.originalUrl(),
                 view.status().name(), view.customAlias(), view.clickCount(), view.createdAt(),
-                view.lastAccessedAt());
+                view.lastAccessedAt(), view.expiresAt(), view.expired());
     }
 }

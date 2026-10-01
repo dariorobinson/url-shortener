@@ -736,3 +736,7 @@ Final:
 - **QA-owned test edits made in US-011 (qa-tester)**
   - **`support/RedirectIT`:** helper `stableHeaders` renamed `headersExceptDate` (Javadoc now says Content-Length is kept, unlike `ApiClient.stableHeaders`). The call sites follow in `shouldAnswerHeadWithTheSameStatusAndHeadersAsGetApartFromDate` (its one assertion line is also wrapped to stay within 120 characters), `shouldReturnByteIdentical404ForAbsentDeactivatedAndDeletedCodeOnTheSameGetPath`, `shouldReturnIdentical404ForAbsentDeactivatedAndDeletedCodeOnTheSameHeadPath` and `shouldReturnTheSame404BodyExceptInstanceForMalformedCodes`. Renamed helper and line wrap only, no assertion changed.
   - **`cucumber/RedirectSteps`:** the same rename (private helper plus its call sites) in the steps `isTheSameProblemAsForAnUnknownCode` and `hasTheSameHeadersAsTheRememberedOne`; the helper Javadoc is the same one-liner. No assertion changed.
+
+## Post-completion change (engineer-approved at the US-016 G2; D106–D127; main session, US-016)
+
+- `OpenApiDocsIT.shouldDocumentExactlyThe302And404ResponsesWithNoImplicit200` — **renamed** to `shouldDocumentExactlyThe302404And410ResponsesWithNoImplicit200` and **updated**: the 410 response is documented as problem+json.

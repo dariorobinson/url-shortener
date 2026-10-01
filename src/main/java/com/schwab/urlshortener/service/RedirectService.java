@@ -5,9 +5,11 @@ import com.schwab.urlshortener.domain.ShortUrl;
 import com.schwab.urlshortener.domain.ShortUrlStatus;
 import com.schwab.urlshortener.repository.PostgresServerErrors;
 import com.schwab.urlshortener.repository.ShortUrlRepository;
+import com.schwab.urlshortener.service.exception.ShortUrlExpiredException;
 import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
 import com.schwab.urlshortener.shortcode.ShortCodeFormat;
 import java.time.Clock;
+import java.time.Instant;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -15,7 +17,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Resolves a public short link (FR-2). Only ACTIVE links redirect; malformed (D72, D77), unknown, DEACTIVATED (D2)
- * and DELETED codes all throw the one {@link ShortUrlNotFoundException}. Never annotate this class with
+ * and DELETED codes all throw the one {@link ShortUrlNotFoundException}; an ACTIVE link whose expiry has passed
+ * throws {@link ShortUrlExpiredException} (D109, D113: deactivated and deleted take precedence). The clock is read
+ * once per request, and that one instant is both the expiry check's "now" and the click time. Never annotate this
+ * class with
  * {@code @Transactional}: the read runs in a read-only {@link TransactionTemplate} that has finished before
  * {@link #resolve} or {@link #resolveAndRecordClick} records anything, so click recording can never share it (D12).
  * The template is built here and deliberately not published as a bean, which would replace Boot's default
@@ -52,9 +57,10 @@ public class RedirectService {
      * @return the stored original URL of an ACTIVE link, exactly as stored
      * @throws ShortUrlNotFoundException if the code is malformed or unknown, or the link is DEACTIVATED or DELETED;
      *         the cases are indistinguishable (D2, D72, D74)
+     * @throws ShortUrlExpiredException if the link is ACTIVE but expired (D109, D119)
      */
     public String resolve(String code) {
-        return lookup(code).target();
+        return lookup(code, clock.instant()).target();
     }
 
     /**
@@ -64,11 +70,13 @@ public class RedirectService {
      *
      * @return the stored original URL of an ACTIVE link, exactly as stored
      * @throws ShortUrlNotFoundException as {@link #resolve}; nothing is recorded then
+     * @throws ShortUrlExpiredException as {@link #resolve}; nothing is recorded then (D117)
      */
     public String resolveAndRecordClick(String code) {
-        Resolved link = lookup(code);
+        Instant now = clock.instant();                                  // D45: once, for the check and the click
+        Resolved link = lookup(code, now);
         try {
-            clickRecorder.record(link.id(), clock.instant());
+            clickRecorder.record(link.id(), now);
         } catch (RuntimeException e) {
             log.warn("Click not recorded: code={} id={} exception={} sqlState={}", code, link.id(),
                     e.getClass().getSimpleName(), PostgresServerErrors.sqlState(e).orElse("none"));
@@ -76,7 +84,7 @@ public class RedirectService {
         return link.target();
     }
 
-    private Resolved lookup(String code) {
+    private Resolved lookup(String code, Instant now) {
         if (!ShortCodeFormat.isWellFormed(code)) {
             // D72, D77: cannot exist, so no transaction and no connection. The value is client text, never logged.
             log.debug("Redirect not found: reason=MALFORMED");
@@ -93,6 +101,10 @@ public class RedirectService {
             if (reason != null) {
                 log.debug("Redirect not found: code={} reason={}", code, reason);
                 throw new ShortUrlNotFoundException();
+            }
+            if (url.isExpiredAt(now)) {                                  // D111, D113: after the status check
+                log.debug("Redirect gone: code={} reason=EXPIRED", code);
+                throw new ShortUrlExpiredException();
             }
             return new Resolved(url.getId(), url.getOriginalUrl());
         });

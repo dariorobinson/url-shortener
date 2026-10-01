@@ -1,6 +1,6 @@
 # Requirements
 
-Last updated: 2026-09-30 (US-013, D122–D127). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
+Last updated: 2026-09-30 (US-016 G3, D128). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
 
 ## Functional requirements
 
@@ -162,6 +162,7 @@ Last updated: 2026-09-30 (US-013, D122–D127). Decisions below were made by the
 | D125 | Redundant expiry change (X4) | A PATCH setting the `expiresAt` the link already has returns 200 and writes nothing (no `version` / `updated_at` bump). D26's 409s remain for `active` only. |
 | D126 | Mixed PATCH with a redundant `active` (X5) | If `active` is redundant, the request fails with the D26 409 and **nothing** is applied, expiry included (all-or-nothing). |
 | D127 | Past expiry via PATCH (X6) | Rejected with 400 (same rule as create). To stop a link now, deactivate it. |
+| D128 | Redirect when the clock fails (US-016 G3) | The redirect reads the clock once to decide expiry (D111). If the clock fails, the redirect fails (500, logged once by the advice); nothing is recorded and no URL is logged. This replaces US-010's fail-open behaviour for a failing clock; recording failures still fail open (D12, D93). |
 
 ## Environment and platform decisions
 

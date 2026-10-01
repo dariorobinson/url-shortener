@@ -7,7 +7,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * The stats resource (D101). All eight fields are always present; {@code lastAccessedAt} is {@code null} until the
+ * The stats resource (D101). All ten fields are always present; {@code lastAccessedAt} is {@code null} until the
  * first click. {@code timezone}, {@code from} and {@code to} are the resolved values after defaults.
  */
 public record ShortUrlStatsResponse(
@@ -24,11 +24,14 @@ public record ShortUrlStatsResponse(
         @Schema(description = "Time of the latest click, ISO-8601 UTC (an instant has no zone), or null before the "
                 + "first click", nullable = true) Instant lastAccessedAt,
         @Schema(description = "One entry per local date in [from, to], ascending, including days with no clicks")
-        List<DailyClicksResponse> daily) {
+        List<DailyClicksResponse> daily,
+        @Schema(description = "When the short URL expires, ISO-8601 UTC, or null if it never expires",
+                nullable = true) Instant expiresAt,
+        @Schema(description = "True if the short URL had expired at the time of this request") boolean expired) {
 
     public static ShortUrlStatsResponse from(ShortUrlStats stats) {
         return new ShortUrlStatsResponse(stats.shortCode(), stats.zoneId(), stats.from(), stats.to(),
                 stats.totalClicks(), stats.clicksInRange(), stats.lastAccessedAt(),
-                stats.daily().stream().map(DailyClicksResponse::from).toList());
+                stats.daily().stream().map(DailyClicksResponse::from).toList(), stats.expiresAt(), stats.expired());
     }
 }

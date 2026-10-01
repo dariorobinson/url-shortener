@@ -36,7 +36,8 @@ public class LifecycleSteps {
     private static final String BASE = "/api/v1/urls/";
     private static final String JSON = "application/json";
     private static final Set<String> RESOURCE_KEYS = Set.of("shortCode", "shortUrl", "originalUrl",
-            "status", "customAlias", "clickCount", "createdAt", "lastAccessedAt");
+            "status", "customAlias", "clickCount", "createdAt", "lastAccessedAt",
+            "expiresAt", "expired");
     private static final Set<String> PROBLEM_KEYS =
             Set.of("type", "title", "status", "detail", "instance", "errorCode");
 

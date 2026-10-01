@@ -23,15 +23,17 @@ public interface ShortUrlRepository extends JpaRepository<ShortUrl, Long> {
     /**
      * D16, D27: the only writer of click_count/last_accessed_at. Never touches version or updated_at. D94:
      * GREATEST keeps last_accessed_at at the latest click time when clicks commit out of order, and ignores NULL, so
-     * the first click still sets it.
+     * the first click still sets it. D117: a click at or after expires_at is never counted, the same guard as D91's
+     * status check.
      */
     String RECORD_CLICK_SQL = "UPDATE short_url SET click_count = click_count + 1,"
-            + " last_accessed_at = GREATEST(last_accessed_at, :clickedAt) WHERE id = :id AND status = 'ACTIVE'";
+            + " last_accessed_at = GREATEST(last_accessed_at, :clickedAt) WHERE id = :id AND status = 'ACTIVE'"
+            + " AND (expires_at IS NULL OR expires_at > :clickedAt)";
 
     /**
-     * Atomically counts one click (D91: only while the row is still ACTIVE). Carries no transaction of its own: it
-     * must run in the caller's transaction, which {@code JpaClickRecorder} owns. {@code clickedAt} must already be
-     * truncated to microseconds (D45).
+     * Atomically counts one click (D91: only while the row is still ACTIVE; D117: and not yet expired). Carries no
+     * transaction of its own: it must run in the caller's transaction, which {@code JpaClickRecorder} owns.
+     * {@code clickedAt} must already be truncated to microseconds (D45).
      *
      * @return 1 if the click was counted, 0 if the row is unknown or no longer ACTIVE
      */

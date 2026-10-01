@@ -1110,3 +1110,27 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
 - **Engineer decision:** **Accepted** ("approve all"): the analysis; X1–X6 as D122–D127; US-016 created and added to US-015's `depends_on`; US-012 and US-013 committed together as C7.
 - **Rationale:** *(engineer to add)*
 - **Validation:** US-013 AC1–AC6 mapped to `docs/scenarios.md` Scenario 2 §1–§7; no code or migration changed.
+
+## Entry 36 — US-016 implement URL expiration (design, implementation, G3)
+
+- **Date:** 2026-09-30
+- **Design (G2):** the main session wrote the design note: exact V3 SQL and implementation details (a)–(j). The engineer approved ("approve").
+- **Implementation (main session, no agents):** V3 migration; entity expiry; `ExpirationPolicy` with the truncation-edge check; strict `expiresAt` deserializer; presence-tracking PATCH request; `update` replacing `setActive`; one clock read in the redirect; 410 with `no-store`; expiry guard in the click SQL; `expiresAt`/`expired` on every resource.
+- **Issues found while implementing (self-caught by the test suite):**
+  - The advice's dependency on `ExpirationPolicy` broke every `@WebMvcTest` slice; the fix is that the exception carries the rule text.
+  - A duplicate Cucumber step definition broke the whole Cucumber suite; fixed by reusing the existing step.
+  - MockMvc does not strip HEAD bodies; that assertion moved to the IT.
+  - The editor's incremental compiler left stale classes; clean builds were used from then on.
+- **Behaviour change to flag:** US-010's `RedirectServiceTest.shouldFailOpenWhenTheClockItselfFails` pinned fail-open for a failing clock. Expiry needs "now", so the redirect now fails when the clock fails; the test was replaced and listed in US-010.
+- **Self-review against CLAUDE.md:**
+  - no `@Transactional`, `@DynamicUpdate` or `@Modifying` added;
+  - no `Instant.now()`;
+  - no URL or submitted value logged or echoed;
+  - every "unchanged" assertion has a positive control;
+  - every 404 asserts its `errorCode`, and HEAD 410s have same-path controls;
+  - Done-story test edits are listed by method;
+  - no inline fully-qualified names.
+  - One deliberate exception: `UpdateShortUrlRequest` uses hand-written getters/setters rather than Lombok, because the setters track presence and carry `@JsonSetter`/`@JsonDeserialize`, and the getters carry `@Schema`.
+- **Engineer decision:** "approve all" (G3): US-016 is `Done`; the clock-failure behaviour is accepted as **D128** (fail the redirect rather than skip the expiry check); committed as C8 and pushed.
+- **Rationale:** *(engineer to add)*
+- **Validation:** `./mvnw -o clean verify` exit 0; Surefire 1140/0, Failsafe 904/0; LINE coverage 750/755.

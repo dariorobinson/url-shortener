@@ -66,7 +66,8 @@ class StatsIT extends IntegrationTestBase {
     private static final String NOT_FOUND = "SHORT_URL_NOT_FOUND";
     private static final String NO_STORE = "no-cache, no-store, max-age=0, must-revalidate";
     private static final Set<String> STATS_KEYS = Set.of("shortCode", "timezone", "from", "to", "totalClicks",
-            "clicksInRange", "lastAccessedAt", "daily");
+            "clicksInRange", "lastAccessedAt", "daily",
+            "expiresAt", "expired");
     private static final Set<String> PROBLEM_KEYS = Set.of("type", "title", "status", "detail", "instance",
             "errorCode");
     private static final Set<String> VALIDATION_KEYS = Set.of("type", "title", "status", "detail", "instance",

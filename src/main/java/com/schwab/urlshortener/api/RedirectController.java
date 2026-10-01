@@ -53,7 +53,10 @@ class RedirectController {
                     URL (characters outside printable ASCII are percent-encoded as UTF-8) and \
                     Cache-Control: no-store. HEAD returns the same status and headers, is never counted and is \
                     not listed separately. A code that is unknown, deactivated, deleted or can never be a code gives \
-                    the same 404 SHORT_URL_NOT_FOUND. The query string of the short link is ignored and never \
+                    the same 404 SHORT_URL_NOT_FOUND. An ACTIVE link whose expiry has passed gives 410 \
+                    SHORT_URL_EXPIRED with Cache-Control: no-store, and is not counted; a deactivated or deleted \
+                    link gives 404 even if it has also expired. The query string of the short link is ignored and \
+                    never \
                     forwarded. Invalid Basic credentials get 401. Swagger UI's Try it out follows the \
                     redirect in the browser, where the target's CORS policy usually makes it fail, so curl -i is the \
                     better tool.""",
@@ -69,6 +72,13 @@ class RedirectController {
     @ApiResponse(responseCode = "404",
             description = "SHORT_URL_NOT_FOUND. The code is unknown, malformed, deactivated or deleted; the "
                     + "responses are indistinguishable.",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ErrorResponseSchema.class)))
+    @ApiResponse(responseCode = "410",
+            description = "SHORT_URL_EXPIRED. The link is active but its expiry has passed; its owner can extend or "
+                    + "clear the expiry to make it redirect again.",
+            headers = @Header(name = "Cache-Control", description = "Always no-store",
+                    schema = @Schema(type = "string")),
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ErrorResponseSchema.class)))
     ResponseEntity<Void> redirect(@PathVariable("code") String code, HttpMethod method) {

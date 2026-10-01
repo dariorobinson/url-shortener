@@ -695,3 +695,9 @@ Round 2:
 - **QA-owned test edits made in US-011 (qa-tester)**
   - **`support/GetShortUrlIT`:** helper `stableHeaders` renamed `headersExceptDate` (its Javadoc now says Content-Length is kept, unlike `ApiClient.stableHeaders`); the call sites follow in `shouldReturnByteIdentical404ForAbsentForeignAndDeletedCodeOnTheSamePath` and `shouldReturnTheSame404BodyExceptInstanceForMalformedCodes` (two tests, four calls). Renamed helper only, no assertion changed.
   - **`support/OpenApiDocsIT`:** added a `STATS_PATH` constant, helpers `stats` and `statsParameter`, and six US-011 tests (`shouldDocumentOnlyGetOnTheStatsPathWithExactlyTheFourDeclaredParameters`, `shouldDocumentTheTimezoneRuleTheSignWarningAndThePlusEncoding`, `shouldDocumentFromAndToAsOptionalDatesWithTheirDefaultsAndLimits`, `shouldDocumentTheStatsResponsesAsExactlyTheFiveExpectedStatuses`, `shouldDocumentTheStats200AsJsonOnlyWithTheD101FieldsAndTheDailyEntryShape`, `shouldApplyBasicAuthenticationAndDescribeLocalDaysAndTheUtcLastAccess`). Every existing test is unchanged.
+
+## Post-completion change (engineer-approved at the US-016 G2; D106–D127; main session, US-016)
+
+- `ShortUrlControllerWebMvcTest.shouldReturn200WithTheExactEightFieldResourceAndANullLastAccessedAt` — **renamed** to `shouldReturn200WithTheExactTenFieldResourceAndANullLastAccessedAt`.
+- `GetShortUrlIT` and `GetShortUrlSteps` — **updated** class-level `RESOURCE_KEYS` (two added keys).
+- `OpenApiDocsIT.shouldDocumentGet200AsJsonOnlyWithTheSameEightPropertiesAsCreate` — **renamed** to `shouldDocumentGet200AsJsonOnlyWithTheSameTenPropertiesAsCreate` and **updated**.

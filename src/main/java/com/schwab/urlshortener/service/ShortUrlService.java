@@ -10,6 +10,7 @@ import com.schwab.urlshortener.repository.PostgresServerErrors;
 import com.schwab.urlshortener.repository.ShortUrlRepository;
 import com.schwab.urlshortener.service.exception.AliasAlreadyExistsException;
 import com.schwab.urlshortener.service.exception.InvalidAliasException;
+import com.schwab.urlshortener.service.exception.InvalidExpirationException;
 import com.schwab.urlshortener.service.exception.InvalidStatsQueryException;
 import com.schwab.urlshortener.service.exception.InvalidUrlException;
 import com.schwab.urlshortener.service.exception.ShortCodeUnavailableException;
@@ -34,7 +35,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Creates short URLs (FR-1, FR-3, FR-10), reads them for their owner or an ADMIN (FR-12, D4, D13), and changes
- * their lifecycle: deactivate, reactivate and soft delete (FR-6, D26, D35, D36, D46).
+ * their lifecycle: deactivate, reactivate, change the expiry and soft delete (FR-4, FR-6, D26, D35, D36, D46, D114).
  *
  * <p><b>Never annotate {@code create}, this class or its caller with {@code @Transactional}.</b> Each
  * insert attempt runs in its own {@code REQUIRES_NEW} transaction, because PostgreSQL aborts a
@@ -48,7 +49,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * the final guarantee under concurrency; there is no existence pre-check.
  *
  * <p>{@code get} runs in a read-only {@code TransactionTemplate} built in the constructor, never under
- * {@code @Transactional}: that annotation stays forbidden on every method of this class. {@code setActive} and
+ * {@code @Transactional}: that annotation stays forbidden on every method of this class. {@code update} and
  * {@code delete} run in the third template, {@code readWrite} (REQUIRED, read-write), so the load, the transition
  * and the versioned UPDATE share one transaction (D35). {@code stats} runs in a fourth template, {@code snapshotRead}
  * (read-only, REPEATABLE READ, D102), so the link read and the daily counts describe one snapshot.
@@ -62,6 +63,7 @@ public class ShortUrlService {
     private final ShortCodeGenerator generator;
     private final UrlValidator urlValidator;
     private final AliasPolicy aliasPolicy;
+    private final ExpirationPolicy expirationPolicy;
     private final Clock clock;
     private final int maxAttempts;
     private final TransactionTemplate requiresNew;
@@ -71,13 +73,14 @@ public class ShortUrlService {
 
     public ShortUrlService(ShortUrlRepository repository, ClickEventRepository clickEvents,
             ShortCodeGenerator generator, UrlValidator urlValidator,
-            AliasPolicy aliasPolicy, Clock clock, ShortCodeProperties codeProperties,
+            AliasPolicy aliasPolicy, ExpirationPolicy expirationPolicy, Clock clock, ShortCodeProperties codeProperties,
             PlatformTransactionManager transactionManager) {
         this.repository = repository;
         this.clickEvents = clickEvents;
         this.generator = generator;
         this.urlValidator = urlValidator;
         this.aliasPolicy = aliasPolicy;
+        this.expirationPolicy = expirationPolicy;
         this.clock = clock;
         this.maxAttempts = codeProperties.maxAttempts();
         this.requiresNew = new TransactionTemplate(transactionManager);
@@ -94,6 +97,8 @@ public class ShortUrlService {
      * @return the created short URL
      * @throws InvalidUrlException if the URL fails {@link UrlValidator} (checked first, D63)
      * @throws InvalidAliasException if a submitted alias fails {@link AliasPolicy}
+     * @throws InvalidExpirationException if a submitted {@code expiresAt} is not in the future or is beyond the
+     *         horizon (checked after the URL and the alias, D124)
      * @throws AliasAlreadyExistsException if the alias is already a short code in any status
      * @throws ShortCodeUnavailableException if every generation attempt collided or was rejected
      * @throws DataIntegrityViolationException for any violation other than {@code uk_short_url_short_code}
@@ -104,10 +109,15 @@ public class ShortUrlService {
             throw new InvalidUrlException();
         }
         Instant now = clock.instant();
-        if (command.alias() != null) {
-            return createWithAlias(command, now);
+        if (command.alias() != null && !aliasPolicy.isValid(command.alias())) {
+            log.debug("Create rejected: errorCode={}", "INVALID_ALIAS");
+            throw new InvalidAliasException();
         }
-        return createWithGeneratedCode(command, now);
+        Instant expiresAt = command.expiresAt() == null ? null : validExpiry(command.expiresAt(), now, "Create");
+        if (command.alias() != null) {
+            return createWithAlias(command, expiresAt, now);
+        }
+        return createWithGeneratedCode(command, expiresAt, now);
     }
 
     /**
@@ -117,7 +127,8 @@ public class ShortUrlService {
      *         indistinguishable
      */
     public ShortUrlView get(String code, Caller caller) {
-        return readOnly.execute(status -> ShortUrlView.from(loadVisible(code, caller)));
+        Instant now = clock.instant();
+        return readOnly.execute(status -> ShortUrlView.from(loadVisible(code, caller), now));
     }
 
     /**
@@ -133,8 +144,9 @@ public class ShortUrlService {
      */
     public ShortUrlStats stats(String code, String timezone, String from, String to, Caller caller) {
         StatsPeriod period;
+        Instant now = clock.instant();                                                // D45: the clock is read once
         try {
-            period = StatsPeriod.resolve(timezone, from, to, clock.instant());         // D45: the clock is read once
+            period = StatsPeriod.resolve(timezone, from, to, now);
         } catch (InvalidStatsQueryException e) {
             log.debug("Stats rejected: errorCode=VALIDATION_FAILED parameters={}", e.violations().stream()
                     .map(v -> v.parameter().wireName()).toList());
@@ -145,38 +157,60 @@ public class ShortUrlService {
             List<ClickEventRepository.DayCount> rows =
                     clickEvents.countClicksPerDay(url.getId(), period.dayStarts(), period.end());
             return ShortUrlStats.of(url.getShortCode(), period, url.getClickCount(), url.getLastAccessedAt(),
-                    period.densify(rows));
+                    period.densify(rows), url.getExpiresAt(), url.isExpiredAt(now));
         });
     }
 
     /**
-     * Deactivates ({@code active == false}) or reactivates ({@code true}) a short URL (D26, D34).
+     * Applies a PATCH (D34, D114): deactivates or reactivates, and/or sets, changes or clears the expiry, all in one
+     * transaction. The expiry is validated first, before any lookup (400 before 404, as D104). The {@code active}
+     * transition runs before the expiry change, so a redundant one fails the whole request and nothing is applied
+     * (D126). An expiry equal to the current one is not a change (D125); if nothing changes, nothing is written.
      *
      * @return the short URL after the change
+     * @throws InvalidExpirationException if a new {@code expiresAt} is not in the future or is beyond the horizon
+     *         (D127)
      * @throws ShortUrlNotFoundException if the code is malformed, unknown, DELETED, or not the caller's (D4, D13, D72)
      * @throws ShortUrlAlreadyDeactivatedException if deactivating a DEACTIVATED link
      * @throws ShortUrlAlreadyActiveException if reactivating an ACTIVE link
      * @throws ShortUrlConcurrentModificationException if another request changed the link first (D35)
      */
-    public ShortUrlView setActive(String code, boolean active, Caller caller) {
+    public ShortUrlView update(String code, UpdateShortUrlCommand command, Caller caller) {
         Instant now = clock.instant();                                            // D45: once per request
+        Instant newExpiry = command.expiryPresent() && command.expiresAt() != null
+                ? validExpiry(command.expiresAt(), now, "Update") : null;
+        String action = actionOf(command);
         ShortUrlView view;
         try {
             view = readWrite.execute(status -> {
                 ShortUrl url = loadVisible(code, caller);
-                if (active) {
-                    url.reactivate(now);
-                } else {
-                    url.deactivate(now);
+                boolean changed = false;
+                if (command.active() != null) {
+                    if (command.active()) {
+                        url.reactivate(now);
+                    } else {
+                        url.deactivate(now);
+                    }
+                    changed = true;
                 }
-                repository.flush();                                               // the versioned UPDATE runs here
-                return ShortUrlView.from(url);
+                if (command.expiryPresent()) {
+                    changed |= url.changeExpiry(newExpiry, now);
+                }
+                if (changed) {
+                    repository.flush();                                           // the versioned UPDATE runs here
+                }
+                return ShortUrlView.from(url, now);
             });
         } catch (OptimisticLockingFailureException e) {                           // D35: flush-time or commit-time
-            log.info("Short URL changed concurrently: code={} action={}", code, active ? "REACTIVATE" : "DEACTIVATE");
+            log.info("Short URL changed concurrently: code={} action={}", code, action);
             throw new ShortUrlConcurrentModificationException(e);
         }
-        log.info("Short URL {}: code={}", active ? "reactivated" : "deactivated", code);   // after commit only
+        if (command.active() != null) {                                           // after commit only
+            log.info("Short URL {}: code={}", command.active() ? "reactivated" : "deactivated", code);
+        }
+        if (command.expiryPresent()) {
+            log.info("Short URL expiry {}: code={}", command.expiresAt() == null ? "cleared" : "set", code);
+        }
         return view;
     }
 
@@ -229,14 +263,10 @@ public class ShortUrlService {
         return url;
     }
 
-    private ShortUrlView createWithAlias(CreateShortUrlCommand command, Instant now) {
+    private ShortUrlView createWithAlias(CreateShortUrlCommand command, Instant expiresAt, Instant now) {
         String alias = command.alias();
-        if (!aliasPolicy.isValid(alias)) {
-            log.debug("Create rejected: errorCode={}", "INVALID_ALIAS");
-            throw new InvalidAliasException();
-        }
         try {
-            return created(insert(alias, command, true, now));
+            return created(insert(alias, command, true, expiresAt, now), now);
         } catch (DataIntegrityViolationException e) {
             if (isShortCodeConflict(e)) {
                 log.info("Alias conflict: code={}", alias);
@@ -246,7 +276,7 @@ public class ShortUrlService {
         }
     }
 
-    private ShortUrlView createWithGeneratedCode(CreateShortUrlCommand command, Instant now) {
+    private ShortUrlView createWithGeneratedCode(CreateShortUrlCommand command, Instant expiresAt, Instant now) {
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             String code = generator.generate();
             if (!aliasPolicy.isValid(code)) {
@@ -255,7 +285,7 @@ public class ShortUrlService {
                 continue;
             }
             try {
-                return created(insert(code, command, false, now));
+                return created(insert(code, command, false, expiresAt, now), now);
             } catch (DataIntegrityViolationException e) {
                 if (!isShortCodeConflict(e)) {
                     throw e;
@@ -269,15 +299,33 @@ public class ShortUrlService {
     }
 
     /** One attempt, in its own transaction, on a fresh entity. */
-    private ShortUrl insert(String code, CreateShortUrlCommand command, boolean customAlias, Instant now) {
+    private ShortUrl insert(String code, CreateShortUrlCommand command, boolean customAlias, Instant expiresAt,
+            Instant now) {
         return requiresNew.execute(status -> repository.saveAndFlush(
-                ShortUrl.create(code, command.originalUrl(), customAlias, command.createdBy(), now)));
+                ShortUrl.create(code, command.originalUrl(), customAlias, command.createdBy(), now, expiresAt)));
     }
 
-    private ShortUrlView created(ShortUrl saved) {
-        log.info("Short URL created: id={} code={} customAlias={} host={}", saved.getId(), saved.getShortCode(),
-                saved.isCustomAlias(), hostOf(saved.getOriginalUrl()));
-        return ShortUrlView.from(saved);
+    private ShortUrlView created(ShortUrl saved, Instant now) {
+        log.info("Short URL created: id={} code={} customAlias={} host={} expires={}", saved.getId(),
+                saved.getShortCode(), saved.isCustomAlias(), hostOf(saved.getOriginalUrl()),
+                saved.getExpiresAt() != null);
+        return ShortUrlView.from(saved, now);
+    }
+
+    /** D107, D124: validated against the request's instant; never logs the submitted value. */
+    private Instant validExpiry(Instant expiresAt, Instant now, String operation) {
+        try {
+            return expirationPolicy.validate(expiresAt, now);
+        } catch (InvalidExpirationException e) {
+            log.debug("{} rejected: errorCode={} field={}", operation, "VALIDATION_FAILED", "expiresAt");
+            throw e;
+        }
+    }
+
+    private static String actionOf(UpdateShortUrlCommand command) {
+        String active = command.active() == null ? null : command.active() ? "REACTIVATE" : "DEACTIVATE";
+        String expiry = !command.expiryPresent() ? null : command.expiresAt() == null ? "CLEAR_EXPIRY" : "SET_EXPIRY";
+        return active == null ? expiry : expiry == null ? active : active + "+" + expiry;
     }
 
     private static boolean isShortCodeConflict(DataIntegrityViolationException e) {

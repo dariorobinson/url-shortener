@@ -72,7 +72,8 @@ class ShortUrlStatsWebMvcTest {
     private static final String PATH = "/api/v1/urls/" + CODE + "/stats";
     private static final Set<String> BASE_KEYS = Set.of("type", "title", "status", "detail", "instance", "errorCode");
     private static final Set<String> STATS_KEYS = Set.of("shortCode", "timezone", "from", "to", "totalClicks",
-            "clicksInRange", "lastAccessedAt", "daily");
+            "clicksInRange", "lastAccessedAt", "daily",
+            "expiresAt", "expired");
     private static final Instant LAST = Instant.parse("2026-03-09T03:59:59.999999Z");
 
     @TestConfiguration(proxyBeanMethods = false)
