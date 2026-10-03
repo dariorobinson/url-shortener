@@ -15,6 +15,7 @@ import com.schwab.urlshortener.service.exception.ShortUrlNotFoundException;
 import com.schwab.urlshortener.service.exception.StatsParameter;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -194,6 +195,8 @@ class GlobalExceptionHandlerTest {
         assertThat(body.getDetail()).isEqualTo("The request could not be read.");
     }
 
+    @RequiredArgsConstructor
+
     private enum Lifecycle {
         DELETED(HttpStatus.NOT_FOUND, "SHORT_URL_NOT_FOUND", "The short URL was not found."),
         ALREADY_DEACTIVATED(HttpStatus.CONFLICT, "SHORT_URL_ALREADY_DEACTIVATED",
@@ -205,12 +208,6 @@ class GlobalExceptionHandlerTest {
         final HttpStatus status;
         final String errorCode;
         final String detail;
-
-        Lifecycle(HttpStatus status, String errorCode, String detail) {
-            this.status = status;
-            this.errorCode = errorCode;
-            this.detail = detail;
-        }
 
         ResponseEntity<ProblemDetail> handle(GlobalExceptionHandler handler, MockHttpServletRequest request) {
             return switch (this) {

@@ -3,15 +3,15 @@ package com.schwab.urlshortener.util.validation;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Locale;
+import lombok.AccessLevel;
+import lombok.NoArgsConstructor;
 
 /**
  * Strict parsing shared by the submitted-URL check and the APP_BASE_URL startup check (D11, D28).
  * Nothing here trims or normalises the input.
  */
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class HttpUris {
-
-    private HttpUris() {
-    }
 
     /**
      * Parses {@code value} with RFC 3986 rules and returns the URI only if it is absolute, uses

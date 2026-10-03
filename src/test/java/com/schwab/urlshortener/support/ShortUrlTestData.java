@@ -6,6 +6,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
@@ -13,15 +14,12 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * express it (seeding colliding rows, counting rows by marker). Rows seeded here are owned by
  * {@value #SEED_OWNER}. Not a Spring bean: construct it with the context's {@link JdbcTemplate}.
  */
+@RequiredArgsConstructor
 public final class ShortUrlTestData {
 
     public static final String SEED_OWNER = "qa-seed";
 
     private final JdbcTemplate jdbc;
-
-    public ShortUrlTestData(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
-    }
 
     /**
      * Test isolation: HTTP requests run on server threads, so rollback-based isolation is not possible.

@@ -5,6 +5,7 @@ import com.schwab.urlshortener.repository.ClickEventRepository;
 import com.schwab.urlshortener.repository.ShortUrlRepository;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -21,24 +22,24 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class JpaClickRecorder implements ClickRecorder {
 
     private final ShortUrlRepository shortUrls;
     private final ClickEventRepository events;
-    private final TransactionTemplate requiresNew;
+    private final PlatformTransactionManager transactionManager;
 
-    public JpaClickRecorder(ShortUrlRepository shortUrls, ClickEventRepository events,
-            PlatformTransactionManager transactionManager) {
-        this.shortUrls = shortUrls;
-        this.events = events;
-        this.requiresNew = new TransactionTemplate(transactionManager);
-        this.requiresNew.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    /** Its own transaction, so a recording failure never touches the redirect's read (D12, D93). */
+    private TransactionTemplate requiresNew() {
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        return template;
     }
 
     @Override
     public void record(long shortUrlId, Instant clickedAt) {
         Instant at = clickedAt.truncatedTo(ChronoUnit.MICROS);
-        requiresNew.executeWithoutResult(status -> {
+        requiresNew().executeWithoutResult(status -> {
             if (shortUrls.recordClick(shortUrlId, at) == 1) {
                 events.saveAndFlush(ClickEvent.of(shortUrlId, at));
             } else {

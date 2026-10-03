@@ -15,6 +15,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -25,17 +26,13 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * reading past the limit throws {@link PayloadTooLargeException}, which the advice maps to the same 413.
  */
 @Slf4j
+@RequiredArgsConstructor
 public class RequestBodyLimitFilter extends OncePerRequestFilter {
 
     static final String DETAIL = "The request body is too large.";
 
     private final long maxBytes;
     private final ProblemDetailResponseWriter writer;
-
-    public RequestBodyLimitFilter(long maxBytes, ProblemDetailResponseWriter writer) {
-        this.maxBytes = maxBytes;
-        this.writer = writer;
-    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
@@ -76,16 +73,12 @@ public class RequestBodyLimitFilter extends OncePerRequestFilter {
         }
     }
 
+    @RequiredArgsConstructor
     private static final class LimitedInputStream extends ServletInputStream {
 
         private final ServletInputStream delegate;
         private final long maxBytes;
         private long read;
-
-        LimitedInputStream(ServletInputStream delegate, long maxBytes) {
-            this.delegate = delegate;
-            this.maxBytes = maxBytes;
-        }
 
         @Override
         public int read() throws IOException {

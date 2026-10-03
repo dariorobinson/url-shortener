@@ -1,9 +1,11 @@
 package com.schwab.urlshortener.service.exception;
 
+import lombok.RequiredArgsConstructor;
 /**
  * The query parameters of the stats endpoint. A violation names its parameter from this fixed set, never from client
  * text, so the rejected name or value cannot reach a response body or a log line (D99, D100).
  */
+@RequiredArgsConstructor
 public enum StatsParameter {
     TIMEZONE(StatsParameter.TIMEZONE_NAME),
     FROM(StatsParameter.FROM_NAME),
@@ -15,10 +17,6 @@ public enum StatsParameter {
     public static final String TO_NAME = "to";
 
     private final String wireName;
-
-    StatsParameter(String wireName) {
-        this.wireName = wireName;
-    }
 
     /** The exact, case-sensitive name on the wire. */
     public String wireName() {

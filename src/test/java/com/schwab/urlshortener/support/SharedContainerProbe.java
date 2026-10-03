@@ -1,6 +1,8 @@
 package com.schwab.urlshortener.support;
 
 import java.util.concurrent.atomic.AtomicReference;
+import lombok.AccessLevel;
+import lombok.NoArgsConstructor;
 
 /**
  * Test-only helper that proves AC8: a single Testcontainers PostgreSQL container is shared
@@ -13,12 +15,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * (regardless of run order) must observe the exact same ID. A second Spring context would own a
  * second container bean with a different ID, and the assertion below would fail.
  */
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class SharedContainerProbe {
 
     private static final AtomicReference<String> RECORDED_CONTAINER_ID = new AtomicReference<>();
-
-    private SharedContainerProbe() {
-    }
 
     /**
      * Records the given container ID if none has been recorded yet in this JVM, otherwise

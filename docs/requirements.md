@@ -1,6 +1,6 @@
 # Requirements
 
-Last updated: 2026-10-01 (entity/model refactor, D133). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
+Last updated: 2026-10-03 (Lombok constructors, D134). Decisions below were made by the engineer during planning; see [ai-usage-log.md](ai-usage-log.md).
 
 ## Functional requirements
 
@@ -168,6 +168,7 @@ Last updated: 2026-10-01 (entity/model refactor, D133). Decisions below were mad
 | D131 | Connection-pool timeout | `spring.datasource.hikari.connection-timeout` is 3 s, so a pool-exhausted request fails fast. |
 | D132 | Package layout (post-backlog refactor) | `api` is renamed `controller` (with `controller.dto`, `controller.error`); `domain`, `validation`, `shortcode`, `analytics` and `web` move under `com.schwab.urlshortener.util` (first placed in `resources`, renamed to `util` at the engineer's request before commit). Pure refactor: no behaviour, API, schema or configuration change. |
 | D133 | `entity` and `model` packages | `com.schwab.urlshortener.entity` holds only classes persisted to the database (`ShortUrl`, `ClickEvent`, and the `ShortUrlStatus` column enum). `model` holds the non-persisted types the system passes around (commands, views, stats, `Caller`, `StatsPeriod`) and `model.dto` the request/response types (including `FieldViolation`). Consequences decided with it: the three entity transition exceptions move to a top-level `exception` package; `ShortUrlLinks` moves to `util.link` and owns the management path constant; `StrictOffsetDateTimeDeserializer` moves to `util.validation`. Pure refactor: no behaviour, API, schema or configuration change. |
+| D134 | Lombok constructors | Hand-written constructors are replaced with `@RequiredArgsConstructor` (injected-field assignment, enums included) and `@NoArgsConstructor(access = PRIVATE)` (utility classes) wherever the constructor does nothing else. Kept by hand: constructors that validate, compute or register something at startup, and exceptions (`super(message)`). Beans that need a `TransactionTemplate` build it per use from the injected `PlatformTransactionManager`. Pure refactor: no behaviour change. |
 
 ## Environment and platform decisions
 

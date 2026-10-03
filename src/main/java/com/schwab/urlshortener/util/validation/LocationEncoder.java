@@ -1,6 +1,8 @@
 package com.schwab.urlshortener.util.validation;
 
 import java.nio.charset.StandardCharsets;
+import lombok.AccessLevel;
+import lombok.NoArgsConstructor;
 
 /**
  * The D75 encoder, shared by the redirect (which sends its result as {@code Location}) and by
@@ -8,12 +10,10 @@ import java.nio.charset.StandardCharsets;
  * {@code validation} because {@code api} already depends on this package and {@code validation} must not depend
  * on {@code api}.
  */
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class LocationEncoder {
 
     private static final char[] HEX = "0123456789ABCDEF".toCharArray();
-
-    private LocationEncoder() {
-    }
 
     /**
      * D75: every code point outside printable ASCII (0x21 to 0x7E) becomes the upper-case {@code %XX} form of its

@@ -4,6 +4,7 @@ import com.schwab.urlshortener.util.shortcode.ShortCodeGenerator;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
+import lombok.RequiredArgsConstructor;
 
 /**
  * Test-only {@link ShortCodeGenerator} that lets a test force the codes the create endpoint sees
@@ -15,15 +16,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  * parallel execution is ever enabled, every test using this seam must hold
  * {@code @ResourceLock("shortCodeGenerator")}, or the seam must become per-thread.
  */
+@RequiredArgsConstructor
 public final class ScriptedShortCodeGenerator implements ShortCodeGenerator {
 
     private final ShortCodeGenerator delegate;
     private final ConcurrentLinkedQueue<String> queued = new ConcurrentLinkedQueue<>();
     private final AtomicInteger calls = new AtomicInteger();
-
-    public ScriptedShortCodeGenerator(ShortCodeGenerator delegate) {
-        this.delegate = delegate;
-    }
 
     /** The next generate() calls return these codes, in order; afterwards the real generator is used again. */
     public void willReturn(String... codes) {

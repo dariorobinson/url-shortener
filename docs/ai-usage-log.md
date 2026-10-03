@@ -1174,3 +1174,15 @@ Decision values: **Accepted**, **Modified**, **Rejected**.
 - **Engineer decision:** requested by the engineer.
 - **Rationale:** *(engineer to add)*
 - **Validation:** `./mvnw -o clean verify` exit 0 with identical counts (Surefire 1181/0, Failsafe 924/0, LINE 854/867); the app built and run with `docker compose up --build` in an isolated project and smoke-tested (health, create with alias and expiry, redirect, details, stats, PATCH, 404 after deactivate, 400 on a bad body, ADMIN delete, OpenAPI), then removed.
+
+## Entry 41 — Lombok constructors project-wide (post-backlog refactor)
+
+- **Date:** 2026-10-03
+- **Engineer request:** replace hand-written constructors (the example was `ShortUrlService`) with `@RequiredArgsConstructor` / `@AllArgsConstructor` / `@NoArgsConstructor` across the project, where it makes sense.
+- **AI survey (38 constructors plus 3 enums and 2 nested classes):** 18 exceptions call `super(message)` and cannot use Lombok; 6 classes validate or compute in the constructor (`SecureRandomShortCodeGenerator`, `UrlValidator`, `AliasPolicy`, `ShortUrlLinks`, `StrictOffsetDateTimeDeserializer`, `RedirectService`) and stay manual; the rest were converted. `@AllArgsConstructor` was not used anywhere: it would also pull in non-injected fields and is forbidden on entities (CLAUDE.md).
+- **Converted:** `@NoArgsConstructor(access = PRIVATE)` on 6 main and 4 test utility classes; `@RequiredArgsConstructor` on `ShortUrlService`, `JpaClickRecorder`, `ExpirationPolicy`, `RequestBodyLimitFilter` (and its inner stream class), the enums `ErrorCode` and `StatsParameter`, and the test classes `ApiClient`, `ScriptedShortCodeGenerator`, `ShortUrlTestData`, `TestClock` and one test enum.
+- **Design consequence flagged to the engineer:** `ShortUrlService` and `JpaClickRecorder` built `TransactionTemplate`s in their constructors, which Lombok cannot do. They now build each template per use through a small private method (one small object per call). `RedirectService` stays manual because its constructor registers the lost-click counter at startup. Field order was kept equal to the old parameter order, so no test needed to change.
+- **Engineer decision:** requested by the engineer.
+- **Rationale:** *(engineer to add)*
+- **Process note:** the first verification run failed 89 tests, all with "Could not find a valid Docker environment": Docker Desktop's engine was returning 500 on every call. The main session traced every failure to that cause, did not restart the engineer's Docker itself, and reran after the engineer restarted it.
+- **Validation:** `./mvnw -o clean verify` exit 0 with the same test counts (Surefire 1181/0, Failsafe 924/0; LINE 828/841, the lower line count being the no-longer-counted generated constructors); the app built and run with `docker compose up --build` in an isolated project and smoke-tested (health, create with alias and expiry, alias collision 409, generated code, redirect, details, stats, PATCH, 404 after deactivate, USER delete 403, ADMIN delete 204, 413 on a big body, the lost-click metric), then removed.

@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.fail;
 
 import com.schwab.urlshortener.repository.PostgresServerErrors;
 import java.util.Optional;
+import lombok.AccessLevel;
+import lombok.NoArgsConstructor;
 import org.postgresql.util.ServerErrorMessage;
 
 /**
@@ -14,10 +16,8 @@ import org.postgresql.util.ServerErrorMessage;
  * and the JPA path ({@code DataIntegrityViolationException} -&gt; Hibernate
  * {@code ConstraintViolationException} -&gt; {@code PSQLException}).
  */
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class PostgresErrors {
-
-    private PostgresErrors() {
-    }
 
     public static Optional<ServerErrorMessage> serverError(Throwable t) {
         return PostgresServerErrors.serverError(t);

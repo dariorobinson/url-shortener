@@ -6,6 +6,7 @@ import java.time.Instant;
 import java.time.Period;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
@@ -13,13 +14,10 @@ import org.springframework.stereotype.Component;
  * Bean Validation's {@code @Future}, which reads the system clock and would bypass the injected {@code Clock} (D45).
  */
 @Component
+@RequiredArgsConstructor
 public class ExpirationPolicy {
 
-    private final Period maxHorizon;
-
-    public ExpirationPolicy(ExpirationProperties properties) {
-        this.maxHorizon = properties.maxHorizon();
-    }
+    private final ExpirationProperties properties;
 
     /**
      * The comparison is made on microsecond-truncated values, the precision PostgreSQL stores (D45): an
@@ -34,7 +32,7 @@ public class ExpirationPolicy {
     public Instant validate(Instant expiresAt, Instant now) {
         Instant expiry = expiresAt.truncatedTo(ChronoUnit.MICROS);
         Instant current = now.truncatedTo(ChronoUnit.MICROS);
-        Instant latest = now.atOffset(ZoneOffset.UTC).plus(maxHorizon).toInstant();
+        Instant latest = now.atOffset(ZoneOffset.UTC).plus(properties.maxHorizon()).toInstant();
         if (!expiry.isAfter(current) || expiry.isAfter(latest)) {
             throw new InvalidExpirationException(rule());
         }
@@ -43,7 +41,7 @@ public class ExpirationPolicy {
 
     /** The rule text returned to clients in the {@code errors} extension; never contains the submitted value. */
     public String rule() {
-        return "must be in the future and at most " + describe(maxHorizon) + " ahead";
+        return "must be in the future and at most " + describe(properties.maxHorizon()) + " ahead";
     }
 
     private static String describe(Period period) {

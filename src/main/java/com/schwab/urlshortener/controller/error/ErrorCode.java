@@ -1,5 +1,6 @@
 package com.schwab.urlshortener.controller.error;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 
 /**
@@ -8,6 +9,7 @@ import org.springframework.http.HttpStatus;
  * the HTTP status fixed for it elsewhere, so a producer never keeps a second mapping. Later stories
  * reuse these values verbatim.
  */
+@RequiredArgsConstructor
 public enum ErrorCode {
     VALIDATION_FAILED(HttpStatus.BAD_REQUEST),
     MALFORMED_REQUEST(HttpStatus.BAD_REQUEST),
@@ -33,10 +35,6 @@ public enum ErrorCode {
     PAYLOAD_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE);
 
     private final HttpStatus status;
-
-    ErrorCode(HttpStatus status) {
-        this.status = status;
-    }
 
     public HttpStatus status() {
         return status;

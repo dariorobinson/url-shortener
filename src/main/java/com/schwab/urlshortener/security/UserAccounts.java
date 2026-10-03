@@ -5,10 +5,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
+import lombok.AccessLevel;
+import lombok.NoArgsConstructor;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
 
 /** Turns validated user configuration into {@link UserDetails}. Pure: no Spring context needed. */
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
 final class UserAccounts {
 
     /** Every configured hash carries this BCrypt cost, so known and unknown users cost the same to check (D53). */
@@ -19,9 +22,6 @@ final class UserAccounts {
             Pattern.compile("\\A\\$2[aby]\\$" + BCRYPT_STRENGTH + "\\$[./0-9A-Za-z]{53}\\z");
 
     private static final String USERS = "app.security.users[";
-
-    private UserAccounts() {
-    }
 
     /**
      * @throws IllegalArgumentException if a hash is not a cost-10 BCrypt hash, or two usernames are equal;

@@ -1,19 +1,19 @@
 package com.schwab.urlshortener.support;
 
 import com.schwab.urlshortener.util.validation.LocationEncoder;
+import lombok.AccessLevel;
+import lombok.NoArgsConstructor;
 
 /**
  * Builds URLs whose D75-encoded form (D84) is an exact number of bytes, by repeating a non-ASCII unit and padding
  * with ASCII. The result is asserted with {@link LocationEncoder#encode} by the callers, never assumed.
  */
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class EncodedUrls {
 
     public static final String PREFIX = "https://example.com/";
     public static final String CJK = "中";
     public static final String EMOJI = "😀";
-
-    private EncodedUrls() {
-    }
 
     /** Unit "kind" is "CJK" or "emoji"; others are rejected so a typo cannot silently build ASCII. */
     public static String unitFor(String kind) {

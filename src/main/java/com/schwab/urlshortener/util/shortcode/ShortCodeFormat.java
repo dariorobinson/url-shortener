@@ -1,5 +1,7 @@
 package com.schwab.urlshortener.util.shortcode;
 
+import lombok.AccessLevel;
+import lombok.NoArgsConstructor;
 import static com.schwab.urlshortener.util.shortcode.SecureRandomShortCodeGenerator.MAX_LENGTH;
 import static com.schwab.urlshortener.util.shortcode.SecureRandomShortCodeGenerator.MIN_LENGTH;
 
@@ -9,10 +11,8 @@ import static com.schwab.urlshortener.util.shortcode.SecureRandomShortCodeGenera
  * {@code AliasPolicy}, so an existing code that later becomes reserved stays reachable. Shared by the alias policy,
  * the management API lookup (D72) and the redirect (D72).
  */
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class ShortCodeFormat {
-
-    private ShortCodeFormat() {
-    }
 
     /** @return true only for a non-null code of 3 to 32 ASCII letters and digits; never trims or folds case */
     public static boolean isWellFormed(String code) {

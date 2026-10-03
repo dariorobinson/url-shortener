@@ -6,19 +6,19 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 
 /**
  * Test-only Clock: delegates to the production clock bean unless a test fixes the instant. Thread-safe, so a
  * Tomcat request thread sees the instant the test thread set. Reset after every test and scenario.
  */
+@RequiredArgsConstructor
 public final class TestClock extends Clock {
 
+    @NonNull
     private final Clock delegate;
     private final AtomicReference<Instant> fixed = new AtomicReference<>();
-
-    public TestClock(Clock delegate) {
-        this.delegate = Objects.requireNonNull(delegate);
-    }
 
     public void setInstant(Instant instant) {
         fixed.set(Objects.requireNonNull(instant));

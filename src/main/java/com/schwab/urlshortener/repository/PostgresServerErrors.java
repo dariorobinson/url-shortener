@@ -3,6 +3,8 @@ package com.schwab.urlshortener.repository;
 import java.sql.SQLException;
 import java.util.Objects;
 import java.util.Optional;
+import lombok.AccessLevel;
+import lombok.NoArgsConstructor;
 import org.postgresql.util.PSQLException;
 import org.postgresql.util.ServerErrorMessage;
 
@@ -12,6 +14,7 @@ import org.postgresql.util.ServerErrorMessage;
  * {@code lc_messages}, unlike the constraint name Hibernate parses from English message text (D65).
  * This is the only class that imports {@code org.postgresql.*}.
  */
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class PostgresServerErrors {
 
     /** SQLSTATE for a unique constraint violation. */
@@ -19,9 +22,6 @@ public final class PostgresServerErrors {
 
     /** Guards against cyclic cause chains. */
     private static final int MAX_CAUSE_DEPTH = 32;
-
-    private PostgresServerErrors() {
-    }
 
     /**
      * @return the server error of the first {@link PSQLException} in the cause chain, or empty if there is

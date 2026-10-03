@@ -4,6 +4,8 @@ import com.schwab.urlshortener.model.dto.FieldViolation;
 import java.net.URI;
 import java.util.List;
 import java.util.Objects;
+import lombok.AccessLevel;
+import lombok.NoArgsConstructor;
 import org.slf4j.MDC;
 import org.springframework.http.ProblemDetail;
 
@@ -13,6 +15,7 @@ import org.springframework.http.ProblemDetail;
  * {@code errorCode}. Security errors (401, 403) add nothing else; other errors may add documented
  * extensions on top of the same base: {@code errors} (D56) and, on 500 only, {@code requestId}.
  */
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class ProblemDetails {
 
     public static final String ERROR_CODE = "errorCode";
@@ -25,9 +28,6 @@ public final class ProblemDetails {
      * only, so a client can quote it to support.
      */
     public static final String REQUEST_ID = "requestId";
-
-    private ProblemDetails() {
-    }
 
     /**
      * @param code the catalogue entry, which also fixes the HTTP status

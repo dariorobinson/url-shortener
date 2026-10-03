@@ -41,6 +41,7 @@ Base package: `com.schwab.urlshortener`. `JAVA_HOME` must point to JDK 25.
 
 **Lombok**
 - `@Slf4j` for logging; `@RequiredArgsConstructor` with `private final` fields for dependency injection (no field injection).
+- Prefer Lombok to a hand-written constructor: `@RequiredArgsConstructor` when the constructor only assigns injected fields (enums too), `@NoArgsConstructor(access = AccessLevel.PRIVATE)` for utility classes. The generated parameter order is the field declaration order, so keep it stable. Keep a hand-written constructor when it validates its arguments, computes or registers something at startup, or calls `super(...)` (exceptions). A bean that needs a `TransactionTemplate` builds it per use from the injected `PlatformTransactionManager`.
 - Entities: `@Getter`, `@NoArgsConstructor(access = AccessLevel.PROTECTED)`, and intention-revealing methods for state changes (`deactivate()`, `softDelete(by, at)`).
 - Entities must **not** use `@Data`, blanket `@Setter`, `@AllArgsConstructor`, `@EqualsAndHashCode`, or `@ToString` over lazy associations.
 

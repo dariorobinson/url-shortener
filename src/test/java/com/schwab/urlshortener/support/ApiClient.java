@@ -17,12 +17,14 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
+import lombok.RequiredArgsConstructor;
 
 /**
  * Minimal real-HTTP client for the management API, shared by {@code *IT} and Cucumber steps.
  * Credentials are resolved from {@link TestUsers} by username and are never printed or logged.
  * Authentication is per call: pass {@code null} for an anonymous request.
  */
+@RequiredArgsConstructor
 public final class ApiClient {
 
     public static final String CREATE_PATH = "/api/v1/urls";
@@ -39,11 +41,6 @@ public final class ApiClient {
 
     private final int port;
     private final ObjectMapper mapper;
-
-    public ApiClient(int port, ObjectMapper mapper) {
-        this.port = port;
-        this.mapper = mapper;
-    }
 
     /** JSON create body. A null {@code alias} omits the field. */
     public String createBody(String originalUrl, String alias) {

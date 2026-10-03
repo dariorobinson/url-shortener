@@ -31,6 +31,7 @@ import java.net.URI;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
@@ -47,14 +48,14 @@ import org.springframework.transaction.support.TransactionTemplate;
  * insert attempt runs in its own {@code REQUIRES_NEW} transaction, because PostgreSQL aborts a
  * transaction after a failed statement, so a retry must use a fresh one. The
  * {@link DataIntegrityViolationException} is caught outside the template, after it has rolled back.
- * The template is built here and deliberately not published as a bean, which would replace Boot's
- * default {@code transactionTemplate}.
+ * The templates are built here from the injected transaction manager and deliberately not published as beans,
+ * which would replace Boot's default {@code transactionTemplate}.
  *
  * <p>Only a violation of {@code uk_short_url_short_code} means "code taken". Any other constraint
  * violation is rethrown and becomes a 500, never a retry or a 409. The database unique constraint is
  * the final guarantee under concurrency; there is no existence pre-check.
  *
- * <p>{@code get} runs in a read-only {@code TransactionTemplate} built in the constructor, never under
+ * <p>{@code get} runs in a read-only {@code TransactionTemplate} built per use, never under
  * {@code @Transactional}: that annotation stays forbidden on every method of this class. {@code update} and
  * {@code delete} run in the third template, {@code readWrite} (REQUIRED, read-write), so the load, the transition
  * and the versioned UPDATE share one transaction (D35). {@code stats} runs in a fourth template, {@code snapshotRead}
@@ -62,6 +63,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class ShortUrlService {
 
     private final ShortUrlRepository repository;
@@ -71,32 +73,34 @@ public class ShortUrlService {
     private final AliasPolicy aliasPolicy;
     private final ExpirationPolicy expirationPolicy;
     private final Clock clock;
-    private final int maxAttempts;
-    private final TransactionTemplate requiresNew;
-    private final TransactionTemplate readOnly;
-    private final TransactionTemplate readWrite;
-    private final TransactionTemplate snapshotRead;
+    private final ShortCodeProperties codeProperties;
+    private final PlatformTransactionManager transactionManager;
 
-    public ShortUrlService(ShortUrlRepository repository, ClickEventRepository clickEvents,
-            ShortCodeGenerator generator, UrlValidator urlValidator,
-            AliasPolicy aliasPolicy, ExpirationPolicy expirationPolicy, Clock clock, ShortCodeProperties codeProperties,
-            PlatformTransactionManager transactionManager) {
-        this.repository = repository;
-        this.clickEvents = clickEvents;
-        this.generator = generator;
-        this.urlValidator = urlValidator;
-        this.aliasPolicy = aliasPolicy;
-        this.expirationPolicy = expirationPolicy;
-        this.clock = clock;
-        this.maxAttempts = codeProperties.maxAttempts();
-        this.requiresNew = new TransactionTemplate(transactionManager);
-        this.requiresNew.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        this.readOnly = new TransactionTemplate(transactionManager);
-        this.readOnly.setReadOnly(true);
-        this.readWrite = new TransactionTemplate(transactionManager);   // REQUIRED, read-write, default isolation
-        this.snapshotRead = new TransactionTemplate(transactionManager);
-        this.snapshotRead.setReadOnly(true);
-        this.snapshotRead.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);   // D102
+    /** One attempt of a create, in its own transaction (a retry needs a fresh one after a failed statement). */
+    private TransactionTemplate requiresNew() {
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        return template;
+    }
+
+    /** {@code get}: read-only. */
+    private TransactionTemplate readOnly() {
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setReadOnly(true);
+        return template;
+    }
+
+    /** {@code update} and {@code delete}: REQUIRED, read-write, default isolation (D35). */
+    private TransactionTemplate readWrite() {
+        return new TransactionTemplate(transactionManager);
+    }
+
+    /** {@code stats}: read-only, REPEATABLE READ, so the link and the daily counts share one snapshot (D102). */
+    private TransactionTemplate snapshotRead() {
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setReadOnly(true);
+        template.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+        return template;
     }
 
     /**
@@ -134,7 +138,7 @@ public class ShortUrlService {
      */
     public ShortUrlView get(String code, Caller caller) {
         Instant now = clock.instant();
-        return readOnly.execute(status -> ShortUrlView.from(loadVisible(code, caller), now));
+        return readOnly().execute(status -> ShortUrlView.from(loadVisible(code, caller), now));
     }
 
     /**
@@ -158,7 +162,7 @@ public class ShortUrlService {
                     .map(v -> v.parameter().wireName()).toList());
             throw e;
         }
-        return snapshotRead.execute(status -> {
+        return snapshotRead().execute(status -> {
             ShortUrl url = loadVisible(code, caller);
             List<ClickEventRepository.DayCount> rows =
                     clickEvents.countClicksPerDay(url.getId(), period.dayStarts(), period.end());
@@ -188,7 +192,7 @@ public class ShortUrlService {
         String action = actionOf(command);
         ShortUrlView view;
         try {
-            view = readWrite.execute(status -> {
+            view = readWrite().execute(status -> {
                 ShortUrl url = loadVisible(code, caller);
                 boolean changed = false;
                 if (command.active() != null) {
@@ -234,7 +238,7 @@ public class ShortUrlService {
         }
         Instant now = clock.instant();
         try {
-            readWrite.executeWithoutResult(status -> {
+            readWrite().executeWithoutResult(status -> {
                 ShortUrl url = loadVisible(code, caller);
                 url.softDelete(caller.username(), now);                           // D51: exactly the username
                 repository.flush();
@@ -283,6 +287,7 @@ public class ShortUrlService {
     }
 
     private ShortUrlView createWithGeneratedCode(CreateShortUrlCommand command, Instant expiresAt, Instant now) {
+        int maxAttempts = codeProperties.maxAttempts();
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             String code = generator.generate();
             if (!aliasPolicy.isValid(code)) {
@@ -307,7 +312,7 @@ public class ShortUrlService {
     /** One attempt, in its own transaction, on a fresh entity. */
     private ShortUrl insert(String code, CreateShortUrlCommand command, boolean customAlias, Instant expiresAt,
             Instant now) {
-        return requiresNew.execute(status -> repository.saveAndFlush(
+        return requiresNew().execute(status -> repository.saveAndFlush(
                 ShortUrl.create(code, command.originalUrl(), customAlias, command.createdBy(), now, expiresAt)));
     }
 
