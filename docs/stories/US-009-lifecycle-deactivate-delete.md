@@ -845,3 +845,7 @@ Round 2:
 - `LifecycleIT` and `LifecycleSteps` — **updated** class-level `RESOURCE_KEYS` (two added keys).
 - `OpenApiDocsIT.shouldDocumentPatchWithOneCodePathParameterAndAJsonOnlyRequestBodyWithActiveRequired` — **renamed** to `shouldDocumentPatchWithOneCodePathParameterAndAJsonOnlyRequestBodyWithActiveAndExpiresAtOptional` and **updated**: both properties, neither required (D114).
 - Unchanged and still passing: `LifecycleIT.shouldReturn400ValidationFailedNamingTheActiveFieldWhenItIsMissingOrNullAndChangeNothing` (the `{}` body is byte-identical by design).
+
+## Post-completion change (engineer-approved; D135; main session, API documentation removal)
+
+- `OpenApiDocsIT` — **removed**. Methods owned by this story: `shouldDocumentExactlyTheGetPatchAndDeleteOperationsOnTheCodePath`, `shouldDocumentPatchWithOneCodePathParameterAndAJsonOnlyRequestBodyWithActiveAndExpiresAtOptional`, `shouldDocumentPatchResponsesAsExactlyTheSevenExpectedStatuses`, `shouldDocumentPatch200AsJsonOnlyWithTheSameEightPropertiesAsCreate`, `shouldDocumentEveryPatchErrorResponseAsProblemJsonOnlyWithTheProblemSchema`, `shouldApplyBasicAuthenticationToPatchAndDelete`, `shouldDocumentDeleteWithOneCodePathParameterAndNoRequestBody`, `shouldDocumentDeleteResponsesAsExactlyTheSixExpectedStatusesWithNoImplicit200`, `shouldDocumentDelete204WithNoContent`, `shouldDocumentEveryDeleteErrorResponseAsProblemJsonOnlyWithTheProblemSchema`, `shouldDescribeTheAdminOnlySoftDeleteAndTheCodeNeverBeingReused`.

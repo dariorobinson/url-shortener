@@ -940,3 +940,13 @@ Round 2:
 ## Post-completion change (engineer-approved at the US-016 G2; D106–D127; main session, US-016)
 
 - Pointer: `ErrorCodeTest` gained `SHORT_URL_EXPIRED`; listed in US-006, which owns the catalogue test.
+
+## Post-completion change (engineer-approved; D135; main session, API documentation removal)
+
+- `SecurityConfigWebMvcTest.shouldPermitAnonymousGetOnInfrastructurePaths` — **renamed** to `shouldPermitAnonymousGetOnHealth` and reduced to `/actuator/health` (no longer parameterized).
+- `SecurityConfigWebMvcTest.shouldRequireAuthenticationForReservedPrefixesAndNestedPaths` — **updated**: added `/v3/api-docs`, `/v3/api-docs/swagger-config` and `/swagger-ui/index.html`, which now fall to `denyAll` (D57).
+- `SecurityConfigWebMvcTest.shouldNotPermitPostOnInfrastructurePaths` — **updated**: the `POST /v3/api-docs` assertion was removed.
+- `SecurityIT.shouldServePublicInfrastructurePathsAnonymously` — **renamed** to `shouldServeHealthAnonymously` (only `/actuator/health`).
+- `SecurityIT.shouldRedirectSwaggerUiHtmlAnonymouslyToUiIndex` — **replaced** by `shouldNotExposeAnyApiDocumentationPaths`: the documentation paths give 401 `AUTHENTICATION_REQUIRED` anonymously and `/swagger-ui.html` gives 404 `SHORT_URL_NOT_FOUND`.
+- `security.feature` scenarios "The OpenAPI document is reachable without credentials", "The OpenAPI UI configuration is reachable without credentials" and "The Swagger UI page is reachable without credentials" — **removed**, with the `SecuritySteps` step `theResponseBodyIsAnOpenApiDocument`.
+- Access-table rule 3 (public documentation paths) no longer exists; `SecurityConfig` no longer admits them.

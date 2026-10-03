@@ -147,3 +147,7 @@ Any further Done-story test edit found during implementation is listed the same 
 ## Post-completion change (engineer-approved at the US-014 G2; D129–D131; main session, US-014)
 
 - `RedirectServiceExpiryTest` — **updated**: `setUp` passes a `SimpleMeterRegistry` to the `RedirectService` constructor (H13).
+
+## Post-completion change (engineer-approved; D135; main session, API documentation removal)
+
+- Pointer: `OpenApiDocsIT` (named in the design note's test impact, item 6) was removed; see US-006, US-007, US-008, US-009 and US-011 for the methods. The `expiresAt` and `expired` field descriptions are now `@param` Javadoc on `ShortUrlResponse`, `ShortUrlStatsResponse` and `CreateShortUrlRequest`.

@@ -54,14 +54,10 @@ Feature: Follow a short link
     And the redirect response has no error code "SHORT_URL_NOT_FOUND"
 
     Examples:
-      | path                        | status |
-      | /actuator/health            | 200    |
-      | /v3/api-docs                | 200    |
-      | /v3/api-docs/swagger-config | 200    |
-      | /swagger-ui/index.html      | 200    |
-      | /swagger-ui.html            | 302    |
-      | /api                        | 401    |
-      | /actuator                   | 401    |
+      | path             | status |
+      | /actuator/health | 200    |
+      | /api             | 401    |
+      | /actuator        | 401    |
 
   # AC5 (D78)
   Scenario: An authenticated request for the bare reserved word api is a not-found, never a redirect

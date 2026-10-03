@@ -2,6 +2,8 @@
 
 This document records the three required engineering scenarios.
 
+> **Note (D135):** the generated API documentation (springdoc-openapi, `OpenApiDocsIT`) was removed after these scenarios were delivered. Mentions of OpenAPI below describe the work as it was done.
+
 ---
 
 ## Scenario 1 — Greenfield: initial URL-shortening capability

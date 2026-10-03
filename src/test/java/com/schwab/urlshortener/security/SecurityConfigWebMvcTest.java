@@ -334,18 +334,17 @@ class SecurityConfigWebMvcTest {
         }
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {"/actuator/health", "/v3/api-docs", "/v3/api-docs/swagger-config", "/v3/api-docs.yaml",
-            "/swagger-ui.html", "/swagger-ui/index.html"})
-    void shouldPermitAnonymousGetOnInfrastructurePaths(String path) throws Exception {
-        MvcResult result = mockMvc.perform(get(path)).andReturn();
+    @Test
+    void shouldPermitAnonymousGetOnHealth() throws Exception {
+        MvcResult result = mockMvc.perform(get("/actuator/health")).andReturn();
 
         assertThat(result.getResponse().getStatus()).isNotIn(401, 403);
         assertThat(result.getResponse().getHeader(HttpHeaders.WWW_AUTHENTICATE)).isNull();
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"/api", "/actuator", "/actuator/env", "/a/b", "/api/anything", "/actuator/health/x"})
+    @ValueSource(strings = {"/api", "/actuator", "/actuator/env", "/a/b", "/api/anything", "/actuator/health/x",
+            "/v3/api-docs", "/v3/api-docs/swagger-config", "/swagger-ui/index.html"})
     void shouldRequireAuthenticationForReservedPrefixesAndNestedPaths(String path) throws Exception {
         assertAuthenticationRequired(get(path));
     }
@@ -361,7 +360,6 @@ class SecurityConfigWebMvcTest {
     @Test
     void shouldNotPermitPostOnInfrastructurePaths() throws Exception {
         assertAuthenticationRequired(post("/actuator/health"));
-        assertAuthenticationRequired(post("/v3/api-docs"));
     }
 
     // ---- D55

@@ -62,8 +62,6 @@ class SecurityConfig {
                         // 2. Public infrastructure. HEAD on health is for load-balancer probes (US-014 H7).
                         .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
                         .requestMatchers(HttpMethod.HEAD, "/actuator/health").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/v3/api-docs", "/v3/api-docs/**", "/v3/api-docs.yaml",
-                                "/swagger-ui.html", "/swagger-ui/**").permitAll()
                         // 3. Reserved prefixes, declared before the public single-segment rule so that
                         //    /actuator and /api are never treated as a short code
                         //    Every other actuator path is ADMIN-only (US-014 H6), e.g. /actuator/metrics.

@@ -64,12 +64,6 @@ public class SecuritySteps {
         assertThat(objectMapper.readTree(response.body()).get(field).asText()).isEqualTo(value);
     }
 
-    @Then("the response body is an OpenAPI 3 document")
-    public void theResponseBodyIsAnOpenApiDocument() throws IOException {
-        JsonNode json = objectMapper.readTree(response.body());
-        assertThat(json.path("openapi").asText()).startsWith("3.");
-    }
-
     @Then("the response is an authentication-required problem")
     public void theResponseIsAnAuthenticationRequiredProblem() throws IOException {
         assertThat(response.headers().firstValue("Content-Type").orElse(""))

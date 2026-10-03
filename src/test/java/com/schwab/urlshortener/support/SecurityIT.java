@@ -278,25 +278,27 @@ class SecurityIT extends IntegrationTestBase {
     }
 
     @Test
-    void shouldServePublicInfrastructurePathsAnonymously() throws Exception {
-        for (String path : List.of("/actuator/health", "/v3/api-docs", "/v3/api-docs/swagger-config",
-                "/v3/api-docs.yaml", "/swagger-ui/index.html")) {
-            HttpResponse<String> response = anonymous("GET", path);
+    void shouldServeHealthAnonymously() throws Exception {
+        HttpResponse<String> response = anonymous("GET", "/actuator/health");
 
-            assertThat(response.statusCode()).as(path).isEqualTo(200);
-            assertThat(response.headers().firstValue("WWW-Authenticate")).as(path).isEmpty();
-        }
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.headers().firstValue("WWW-Authenticate")).isEmpty();
     }
 
     @Test
-    void shouldRedirectSwaggerUiHtmlAnonymouslyToUiIndex() throws Exception {
-        HttpClient following = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build();
-        HttpResponse<String> response = following.send(
-                HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/swagger-ui.html")).GET().build(),
-                HttpResponse.BodyHandlers.ofString());
+    void shouldNotExposeAnyApiDocumentationPaths() throws Exception {
+        // Two or more segments fall to denyAll (D57), so an anonymous caller is asked to authenticate.
+        for (String path : List.of("/v3/api-docs", "/v3/api-docs/swagger-config", "/v3/api-docs.yaml",
+                "/swagger-ui/index.html")) {
+            HttpResponse<String> response = anonymous("GET", path);
 
-        assertThat(response.statusCode()).isEqualTo(200);
-        assertThat(response.headers().firstValue("Set-Cookie")).isEmpty();
+            assertThat(response.statusCode()).as(path).isEqualTo(401);
+            assertThat(json(response).get("errorCode").asText()).as(path).isEqualTo("AUTHENTICATION_REQUIRED");
+        }
+        // One segment is only ever a short code: malformed, so the generic not-found (D72).
+        HttpResponse<String> welcome = anonymous("GET", "/swagger-ui.html");
+        assertThat(welcome.statusCode()).isEqualTo(404);
+        assertThat(json(welcome).get("errorCode").asText()).isEqualTo("SHORT_URL_NOT_FOUND");
     }
 
     // ---- Real URL decoding / firewall (bypass pins) ----

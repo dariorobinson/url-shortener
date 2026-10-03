@@ -4,7 +4,6 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSetter;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.schwab.urlshortener.util.validation.StrictOffsetDateTimeDeserializer;
-import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.OffsetDateTime;
 
 /**
@@ -13,9 +12,9 @@ import java.time.OffsetDateTime;
  * and "clear". Each setter records that its field was present; Jackson calls it for an explicit {@code null} too.
  *
  * <p>{@code active} keeps D89 (only a real JSON boolean) and {@code expiresAt} is parsed strictly (D123). Unknown
- * fields and duplicate keys still fail (D59). The body holds no URL, but it is never logged.
+ * fields and duplicate keys still fail (D59). The body holds no URL, but it is never logged. At least one of
+ * {@code active} and {@code expiresAt} must be present (D114).
  */
-@Schema(description = "At least one of active and expiresAt must be present.")
 public class UpdateShortUrlRequest {
 
     private Boolean active;
@@ -23,8 +22,7 @@ public class UpdateShortUrlRequest {
     private OffsetDateTime expiresAt;
     private boolean expiresAtPresent;
 
-    @Schema(description = "false deactivates the short URL, true reactivates it. Only a JSON boolean is accepted; "
-            + "null is rejected.", nullable = false, example = "false")
+    /** {@code false} deactivates the short URL, {@code true} reactivates it. Only a JSON boolean is accepted. */
     public Boolean getActive() {
         return active;
     }
@@ -35,10 +33,10 @@ public class UpdateShortUrlRequest {
         this.activePresent = true;
     }
 
-    @Schema(description = "Sets, extends or shortens the expiry (ISO-8601 with an explicit offset or Z, strictly in "
-            + "the future, at most 10 years ahead); null clears it so the link never expires; omit it to leave the "
-            + "expiry unchanged.", type = "string", format = "date-time", nullable = true,
-            example = "2027-01-31T23:59:59Z")
+    /**
+     * Sets, extends or shortens the expiry (ISO-8601 with an explicit offset or Z, strictly in the future, at most
+     * 10 years ahead); null clears it so the link never expires; omitting it leaves the expiry unchanged.
+     */
     public OffsetDateTime getExpiresAt() {
         return expiresAt;
     }

@@ -31,7 +31,6 @@ public class SmokeSteps {
     private ObjectMapper objectMapper;
 
     private ResponseEntity<String> healthResponse;
-    private ResponseEntity<String> openApiResponse;
 
     @When("I check the application's health")
     public void iCheckTheApplicationsHealth() {
@@ -48,24 +47,6 @@ public class SmokeSteps {
         var json = objectMapper.readTree(healthResponse.getBody());
         assertThat(json.size()).isEqualTo(1);
         assertThat(json.get("status").asText()).isEqualTo(expectedStatus);
-    }
-
-    @When("I request the OpenAPI document")
-    public void iRequestTheOpenApiDocument() {
-        openApiResponse = restTemplate.getForEntity("/v3/api-docs", String.class);
-    }
-
-    @Then("the OpenAPI document responds with status {int}")
-    public void theOpenApiDocumentRespondsWithStatus(int expectedStatus) {
-        assertThat(openApiResponse.getStatusCode().value()).isEqualTo(expectedStatus);
-    }
-
-    @Then("the OpenAPI document is a valid OpenAPI document")
-    public void theOpenApiDocumentIsAValidOpenApiDocument() throws Exception {
-        var json = objectMapper.readTree(openApiResponse.getBody());
-        assertThat(json.has("openapi")).isTrue();
-        assertThat(json.get("openapi").asText()).startsWith("3.");
-        assertThat(json.has("info")).isTrue();
     }
 
     @When("I record the identity of the test database container from a Cucumber step")

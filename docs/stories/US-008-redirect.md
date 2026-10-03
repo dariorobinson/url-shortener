@@ -749,3 +749,12 @@ Final:
 - `RedirectIT.shouldGiveHeadTheRecordedStatusOnEveryRoutingPath` — **updated** rows: `/error` 404/404 (H9), `/actuator/health` 200/200 (H7), `/actuator` 401/403 (H6); `/error` 404s assert `RESOURCE_NOT_FOUND`.
 - `RedirectIT.headersExceptDate` and `RedirectSteps.headersExceptDate` (helpers) — **updated**: also ignore `X-Request-Id`.
 - `RedirectServiceTest` — **updated**: the `RedirectService` constructor takes a `MeterRegistry` (H13) in `setUp`, `shouldNeverTouchTheRecorderAndReadTheClockOnceWhenResolvingWithoutRecording` and `shouldFailTheRedirectWithoutRecordingOrLoggingTheUrlWhenTheClockFails`; a `SimpleMeterRegistry` field was added.
+
+## Post-completion change (engineer-approved; D135; main session, API documentation removal)
+
+- `OpenApiDocsIT` — **removed**. Methods owned by this story: `shouldDocumentTheRedirectPathWithExactlyTheGetOperation`, `shouldDocumentExactlyOneRequiredCodePathParameterWithoutAPattern`, `shouldDocumentExactlyThe302404And410ResponsesWithNoImplicit200`, `shouldDocument302WithLocationAndCacheControlHeadersAndNoContent`, `shouldDocument404AsProblemJsonOnlyWithTheProblemSchema`, `shouldRequireNoSecurityOnTheRedirectOperation`.
+- `RedirectIT.shouldRouteInfrastructurePathsToTheirOwnHandlersForAnonymousAndAuthenticatedCallers` — **updated**: the `/swagger-ui.html` 302 assertion was removed; `/actuator/health` still gives 200, and the documentation paths now give 401 anonymously and 403 for alice (D57).
+- `RedirectIT.shouldGive404ShortUrlNotFoundForSingleSegmentPathsThatOnlyLookLikeInfrastructure` — **updated**: added `/swagger-ui.html`.
+- `RedirectIT.shouldGiveHeadTheRecordedStatusOnEveryRoutingPath` — **updated** row: `/swagger-ui.html` 302/302 → 404/404 (its `SHORT_URL_NOT_FOUND` is asserted through GET); the three documentation rows keep 401/403.
+- `RedirectIT.shouldHaveExactlyTheExpectedSingleSegmentGetMappings` — **updated**: `/{code}` and `/error` only.
+- `redirect.feature` AC5 examples — **updated**: the rows `/v3/api-docs`, `/v3/api-docs/swagger-config`, `/swagger-ui/index.html` and `/swagger-ui.html` were removed; `/actuator/health`, `/api` and `/actuator` remain.

@@ -181,13 +181,6 @@ Feature: Create a short URL
       | {"originalUrl":"   "}       |
       | {"alias":"promo2026"}       |
 
-  # AC13
-  Scenario: The API documentation describes the create operation
-    When anyone requests the API documentation
-    Then the documentation describes POST "/api/v1/urls" with Basic authentication
-    And the documentation lists 201, 400, 401, 406, 409, 415 and 503 for the operation
-    And the documentation says internationalised hosts must be submitted as punycode
-
   # AC14
   Scenario Outline: A malformed body is refused without leaking parser details
     Given "alice" is signed in

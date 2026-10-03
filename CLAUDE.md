@@ -22,7 +22,7 @@ Development runs through the agents in `.claude/agents/`:
 
 ## Tech stack
 
-Java 25 · Spring Boot 3.5.x · Spring Web · Spring Data JPA · Spring Security · PostgreSQL · Flyway · Bean Validation · Lombok · springdoc-openapi · JUnit 5 · Mockito · Testcontainers · Cucumber · JaCoCo · Docker Compose · Maven Wrapper
+Java 25 · Spring Boot 3.5.x · Spring Web · Spring Data JPA · Spring Security · PostgreSQL · Flyway · Bean Validation · Lombok · JUnit 5 · Mockito · Testcontainers · Cucumber · JaCoCo · Docker Compose · Maven Wrapper
 
 Base package: `com.schwab.urlshortener`. `JAVA_HOME` must point to JDK 25.
 

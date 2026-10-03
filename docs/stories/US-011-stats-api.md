@@ -898,3 +898,7 @@ Other tests: `*IT` rows of the Tests-required table are `shouldBucketBy...` (DST
 - `StatsPeriodTest.shouldSumTheDailyCountsIntoClicksInRange` — **updated**: `ShortUrlStats.of` takes the expiry and the `expired` flag.
 - `ShortUrlStatsWebMvcTest`, `StatsIT` and `StatsSteps` — **updated** class-level `STATS_KEYS` (two added keys).
 - `OpenApiDocsIT.shouldDocumentTheStats200AsJsonOnlyWithTheD101FieldsAndTheDailyEntryShape` — **updated**: `expiresAt` and `expired`.
+
+## Post-completion change (engineer-approved; D135; main session, API documentation removal)
+
+- `OpenApiDocsIT` — **removed**. Methods owned by this story: `shouldDocumentOnlyGetOnTheStatsPathWithExactlyTheFourDeclaredParameters`, `shouldDocumentTheTimezoneRuleTheSignWarningAndThePlusEncoding`, `shouldDocumentFromAndToAsOptionalDatesWithTheirDefaultsAndLimits`, `shouldDocumentTheStatsResponsesAsExactlyTheFiveExpectedStatuses`, `shouldDocumentTheStats200AsJsonOnlyWithTheD101FieldsAndTheDailyEntryShape`, `shouldApplyBasicAuthenticationAndDescribeLocalDaysAndTheUtcLastAccess`. The timezone, window and sign-convention rules now live in the `ShortUrlController.stats` Javadoc and D96.

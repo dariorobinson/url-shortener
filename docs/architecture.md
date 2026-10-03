@@ -61,7 +61,6 @@ Verified 2026-09-29 against the Spring Boot 3.5.16 BOM, Maven Central, and vendo
 | Testcontainers | 1.21.4 | Boot-managed | |
 | Mockito / Byte Buddy | 5.17.0 / 1.17.8 | Boot-managed | |
 | JUnit Jupiter / Platform | **5.14.4** (Boot manages 5.12.2) | `junit-jupiter.version` override (D39) | Cucumber 7.34.9 requires Platform ≥ 1.13 |
-| springdoc-openapi | 2.8.17 | explicit | Built on Boot 3.5.x; 3.x is for Boot 4 |
 | Cucumber | 7.34.9 | explicit (BOM) | |
 | JaCoCo | 0.8.15 | explicit | Official Java 25 support since 0.8.14; gate lives in US-001 (D40) |
 | Maven | 3.9.16 | Maven Wrapper (`only-script`) | Enforcer: JDK `[25,)`, Maven `[3.9.16,)` |
@@ -170,7 +169,7 @@ com.schwab.urlshortener
 │   └── web/            RequestIdFilter, RequestBodyLimitFilter, their registration and HttpProperties
 ├── security/           SecurityConfig (filter chain, RoleHierarchy), user accounts from configuration,
 │                       401/403 problem writers
-└── config/             Clock, Jackson (strict booleans), OpenAPI, short-code / alias / expiration properties,
+└── config/             Clock, Jackson (strict booleans), short-code / alias / expiration properties,
                         Tomcat error-page valve
 ```
 
@@ -281,7 +280,7 @@ HTTP mappings: *implemented (US-009)* (see *Lifecycle* under REST API). `ShortUr
 
 ## REST API
 
-Interactive documentation: `/swagger-ui.html` (OpenAPI 3 at `/v3/api-docs`).
+There is no generated or interactive API documentation (D135): this section, the controller Javadoc and the story acceptance criteria are the contract.
 
 | Method | Path | Access | Success | Errors |
 |---|---|---|---|---|
@@ -352,7 +351,7 @@ The full detail is in the US-008 Design note.
   - There is no body and no `Content-Type`.
   - `Cache-Control` is exactly `no-store`, with no `Pragma` or `Expires`, because Spring Security's cache writer backs off when the header is already set. The redirect's 404 keeps Security's default.
 - **404 negotiation:** the problem+json fallback applies to every parseable `Accept` (`text/html`, `image/*`, `*/*`, none). An unparseable `Accept` gets a 404 with an empty body. It is never a 406.
-- **Routing precedence:** literal mappings (`/error`, `/swagger-ui.html`) win as direct-path matches. Actuator's handler mapping (order −100) runs before `RequestMappingHandlerMapping`. `/{code}` takes every other single segment, including `/favicon.ico`, and bare `/api` for authenticated callers, which gets 404 because it is a reserved word. A QA inventory test pins the single-segment GET mappings to exactly `/{code}`, `/error` and `/swagger-ui.html`.
+- **Routing precedence:** the literal mapping `/error` wins as direct-path matches. Actuator's handler mapping (order −100) runs before `RequestMappingHandlerMapping`. `/{code}` takes every other single segment, including `/favicon.ico`, and bare `/api` for authenticated callers, which gets 404 because it is a reserved word. A QA inventory test pins the single-segment GET mappings to exactly `/{code}` and `/error`.
 - **US-010 seam:** one handler and one response builder. The read transaction has closed before `resolve` returns. US-010 adds an `HttpMethod` parameter, records clicks for GET only after a successful resolution, and fails open (D9, D12). US-008 adds no `ClickRecorder`.
 - **Click recording** *(implemented (US-010); US-010 Design note §4–§6)*:
   - The handler takes `(@PathVariable String code, HttpMethod method)`. GET calls `RedirectService.resolveAndRecordClick(code)`; HEAD and anything else call `resolve(code)`, which never records (D9, D18). The response builder is unchanged.
@@ -436,7 +435,7 @@ The rules below are evaluated top to bottom, and the first match wins. The exact
 |---|---|---|
 | 1 | ERROR dispatch | permitAll (only reached after the original request was authorized) |
 | 2 | `GET /actuator/health` | public |
-| 3 | `GET /v3/api-docs`, `/v3/api-docs/**`, `/v3/api-docs.yaml`, `/swagger-ui.html`, `/swagger-ui/**` | public (springdoc 2.8.17 defaults) |
+| 3 | *(removed, D135)* | Formerly the public API-documentation paths. The numbering is kept so references to rules 4 to 8 stay valid; those paths now fall to rule 8 (two or more segments) or rule 7 (`/swagger-ui.html`, a malformed code, 404) |
 | 4 | `/actuator`, `/actuator/**` | authenticated (keeps `/actuator` from matching rule 7) |
 | 5 | `DELETE /api/v1/urls/**` | `hasRole(ADMIN)` (D3). It covers trailing-slash and nested variants. 403 is returned before any handler or lookup (US-009 AC6, AC8). Admits the ADMIN soft delete (implemented (US-009)) |
 | 6 | `/api`, `/api/**` | `hasRole(USER)`; ADMIN passes through the `ADMIN > USER` hierarchy. Ownership (D4) is enforced in the service. It admits `POST /api/v1/urls` (US-006) and `GET`/`HEAD /api/v1/urls/{code}` (implemented (US-007)), `PATCH /api/v1/urls/{code}` (implemented (US-009)), and `GET`/`HEAD /api/v1/urls/{code}/stats` (designed (US-011), design approved (G2)) |
@@ -447,7 +446,6 @@ Rule: no handler other than the redirect may be mapped to a single path segment,
 
 **Operational notes (engineer-approved at US-005 G3):**
 - `/error` is a **permitted single-segment GET handler**, reachable through the public `GET /*` rule. It is an allowed exception to the "no single-segment handler other than the redirect" rule, and is harmless while error details stay off (`server.error.include-*: never`). A direct `GET /error` answers **500** (Boot's error JSON), because there are no error attributes; it is recorded in US-008, and monitoring that counts 5xx should exclude it (US-014).
-- `/swagger-ui.html` (springdoc's welcome redirect) is the only other permitted single-segment GET handler (implemented (US-008)). Any static resource at the root, such as `index.html` or `favicon.ico`, would be shadowed by `/{code}`.
 - `org.springframework.security` must **never** be set to DEBUG or TRACE logging in shared environments, because at those levels Spring logs attempted usernames, which would break D52.
 
 ## Key design decisions
@@ -568,23 +566,5 @@ RFC 7807 `ProblemDetail` responses with an `errorCode` extension, produced by a 
   - **Precedence: 401 > 405 > 415 > 406 > 400.** Security (401, and 403 per D57) runs in the filter chain first. `handleNoMatch` checks method (405), consumes (415), then produces (406). Body errors (400) and service errors (409, 503) need a matched handler.
   - **Known deviation from D61 (D70):** an **unparseable** `Accept` header still gets 406 and creates nothing, but the body is **empty**. Spring cannot negotiate a type for the error body either, and for a 4xx it drops the content.
 
-### OpenAPI — *implemented (US-006)*
-- `config/OpenApiConfig` declares `@OpenAPIDefinition` and one `@SecurityScheme` `basicAuth` (HTTP, `basic`).
-- The requirement is applied **per controller** (`@SecurityRequirement` on `ShortUrlController`), not globally, so the public redirect (US-008) is never documented as secured.
-- Error responses are declared on each operation with a documentation-only `Problem` schema (`controller/error/ErrorResponseSchema`). springdoc skips advice handlers that have no `@ResponseStatus`, and it models `ProblemDetail` with a nested `properties` map.
-- Every error `@Content` names `mediaType = "application/problem+json"` explicitly. Otherwise springdoc falls back to the mapping's `produces` (`application/json`, D70) and documents errors under the wrong type. `POST /api/v1/urls` documents 406 (D61, D70).
-- The create operation states that IDN hosts are rejected and that clients must submit punycode (D49).
-- *Implemented (US-007):* `GET /api/v1/urls/{code}` documents:
-  - 200 (`application/json`), and 401, 404 and 406 (`application/problem+json`). 405 isn't documented, because it concerns other methods on the path.
-  - Exactly one parameter, `code`.
-  - The D71 use: after an unexpected 409 on create, a 200 confirms the alias is the caller's own.
-- *Implemented (US-008):* `GET /{code}` is documented under the tag `Redirect`, with **no** security requirement:
-  - one path parameter, `code`, with no `pattern`;
-  - `302` with `Location` and `Cache-Control` headers and no content;
-  - `404` as `application/problem+json` with the `Problem` schema.
-
-  HEAD is described in the text, not listed as an operation.
-- *Implemented (US-009):*
-  - `PATCH /api/v1/urls/{code}` documents a request body (`application/json`, `UpdateShortUrlRequest`, `active` required), `200` (`application/json`), and `400`, `401`, `404`, `406`, `409` and `415` (problem+json).
-  - `DELETE /api/v1/urls/{code}` documents exactly `204` (no content), `401`, `403`, `404`, `406` and `409`.
-- `/v3/api-docs` stays at springdoc's default path and stays public (access-table rule 3).
+### API documentation — *removed (D135)*
+The springdoc-openapi dependency, its configuration, every `@Operation`, `@ApiResponse`, `@Schema` and `@Tag` annotation, and the OpenAPI tests were removed. Field and operation rules now live in the Javadoc of the controllers and DTO records, and the error contract in `GlobalExceptionHandler` and `ErrorCode`.

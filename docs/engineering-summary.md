@@ -19,7 +19,7 @@ A URL shortener service: Java 25, Spring Boot 3.5.16, PostgreSQL 18.6, Flyway, S
 **By the numbers:**
 - 16 user stories and 14 commits (C1–C10, the last being this documentation), each approved before it was made.
 - 131 recorded decisions.
-- About 2,100 automated tests: 1,181 unit, slice and repository tests, plus 924 integration tests including 259 Cucumber scenarios. All database tests run against real PostgreSQL.
+- About 2,050 automated tests: 1,179 unit, slice and repository tests, plus 878 integration tests including 250 Cucumber scenarios. All database tests run against real PostgreSQL.
 - 98.5% merged line coverage, with a 70% gate enforced by the build.
 
 ## Key trade-offs
@@ -51,7 +51,6 @@ A URL shortener service: Java 25, Spring Boot 3.5.16, PostgreSQL 18.6, Flyway, S
 - **D84 is enforced by the application only** (D85). A row inserted by raw SQL with a very long non-ASCII URL could still produce a bare 500 on redirect.
 - **A clock failure makes the redirect fail** rather than fail open, because expiry needs "now" (D128).
 - **Tomcat's own 400** for request lines over 8 KiB is minimal HTML, not a problem document; it can't be reached by application code.
-- The OpenAPI text says "10 years" even though the expiry horizon is configurable.
 
 ## Production roadmap
 

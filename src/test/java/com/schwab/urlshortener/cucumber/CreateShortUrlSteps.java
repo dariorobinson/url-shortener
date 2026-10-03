@@ -71,8 +71,6 @@ public class CreateShortUrlSteps {
     private List<HttpResponse<String>> raceResponses = List.of();
     private String raceAlias;
     private String submittedUrl;
-    private JsonNode apiDocs;
-    private JsonNode createOperation;
 
     private ApiClient client() {
         if (client == null) {
@@ -229,14 +227,6 @@ public class CreateShortUrlSteps {
         } finally {
             pool.shutdownNow();
         }
-    }
-
-    @When("anyone requests the API documentation")
-    public void anyoneRequestsTheApiDocumentation() throws Exception {
-        HttpResponse<String> docs = client().get("/v3/api-docs");
-        assertThat(docs.statusCode()).isEqualTo(200);
-        apiDocs = objectMapper.readTree(docs.body());
-        createOperation = apiDocs.path("paths").path("/api/v1/urls").path("post");
     }
 
     // ---- Then: status and problem ----
@@ -420,28 +410,5 @@ public class CreateShortUrlSteps {
         String winner = raceResponses.get(0).statusCode() == 201 ? "alice" : "bob";
         assertThat(raceAlias).isEqualTo(code);
         assertThat(data().createdBy(code)).isEqualTo(winner);
-    }
-
-    // ---- Then: documentation ----
-
-    @Then("the documentation describes POST {string} with Basic authentication")
-    public void theDocumentationDescribesPost(String path) throws Exception {
-        assertThat(apiDocs.path("paths").path(path).path("post").isMissingNode()).isFalse();
-        assertThat(createOperation.path("requestBody").path("content").has("application/json")).isTrue();
-        assertThat(createOperation.path("security").toString()).contains("basicAuth");
-        assertThat(apiDocs.path("components").path("securitySchemes").path("basicAuth").path("scheme").asText())
-                .isEqualTo("basic");
-    }
-
-    @Then("the documentation lists 201, 400, 401, 406, 409, 415 and 503 for the operation")
-    public void theDocumentationListsResponses() {
-        for (String status : List.of("201", "400", "401", "406", "409", "415", "503")) {
-            assertThat(createOperation.path("responses").has(status)).as("response %s documented", status).isTrue();
-        }
-    }
-
-    @Then("the documentation says internationalised hosts must be submitted as punycode")
-    public void theDocumentationMentionsPunycode() {
-        assertThat(createOperation.path("description").asText()).containsIgnoringCase("punycode");
     }
 }

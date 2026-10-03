@@ -10,22 +10,6 @@ Feature: Public and protected paths
     And the response has no authentication challenge
     And the response body has "status" equal to "UP"
 
-  Scenario: The OpenAPI document is reachable without credentials
-    When an anonymous client sends GET to "/v3/api-docs"
-    Then the response status is 200
-    And the response has no authentication challenge
-    And the response body is an OpenAPI 3 document
-
-  Scenario: The OpenAPI UI configuration is reachable without credentials
-    When an anonymous client sends GET to "/v3/api-docs/swagger-config"
-    Then the response status is 200
-    And the response has no authentication challenge
-
-  Scenario: The Swagger UI page is reachable without credentials
-    When an anonymous client sends GET to "/swagger-ui/index.html"
-    Then the response status is 200
-    And the response has no authentication challenge
-
   Scenario Outline: A short-code-shaped path is not blocked by security
     When an anonymous client sends <method> to "<path>"
     Then the response status is not 401

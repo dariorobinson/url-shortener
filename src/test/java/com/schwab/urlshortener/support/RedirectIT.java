@@ -576,13 +576,12 @@ class RedirectIT extends IntegrationTestBase {
             assertThat(error.statusCode()).as("GET /error as %s", user).isEqualTo(404);
             assertThat(json(error).path("errorCode").asText()).isEqualTo("RESOURCE_NOT_FOUND");
 
-            HttpResponse<String> welcome = callAs("GET", "/swagger-ui.html", user);
-            assertThat(welcome.statusCode()).isEqualTo(302);
-            assertThat(welcome.headers().firstValue("Location")).contains("/swagger-ui/index.html");
-
-            for (String path : List.of("/v3/api-docs", "/v3/api-docs/swagger-config", "/swagger-ui/index.html",
-                    "/actuator/health")) {
-                assertThat(callAs("GET", path, user).statusCode()).as("GET %s as %s", path, user).isEqualTo(200);
+            assertThat(callAs("GET", "/actuator/health", user).statusCode()).as("GET health as %s", user)
+                    .isEqualTo(200);
+            // The API documentation is not served: two-segment paths fall to denyAll (D57).
+            for (String path : List.of("/v3/api-docs", "/v3/api-docs/swagger-config", "/swagger-ui/index.html")) {
+                assertThat(callAs("GET", path, user).statusCode()).as("GET %s as %s", path, user)
+                        .isEqualTo(user == null ? 401 : 403);
             }
         }
     }
@@ -591,7 +590,8 @@ class RedirectIT extends IntegrationTestBase {
     void shouldGive404ShortUrlNotFoundForSingleSegmentPathsThatOnlyLookLikeInfrastructure() throws Exception {
         // These fall to the redirect mapping (rule 7) and are malformed or unknown: never a 302, never a 5xx.
         for (String user : new String[] {null, TestUsers.ALICE}) {
-            for (String path : List.of("/favicon.ico", "/v3", "/ab", "/a_b", "/API", "/Actuator")) {
+            for (String path : List.of("/favicon.ico", "/v3", "/ab", "/a_b", "/API", "/Actuator",
+                    "/swagger-ui.html")) {
                 HttpResponse<String> response = callAs("GET", path, user);
 
                 assertNotFound(response, path);
@@ -641,14 +641,14 @@ class RedirectIT extends IntegrationTestBase {
         assertRedirectsTo(call("HEAD", "/" + ACTIVE_CODE), "https://example.com/routing-control");
         Map<String, int[]> expected = new TreeMap<>();
         expected.put("/error", new int[] {404, 404});                  // D82, US-014 H9
-        expected.put("/swagger-ui.html", new int[] {302, 302});
+        expected.put("/swagger-ui.html", new int[] {404, 404});
         expected.put("/api", new int[] {401, 404});
         expected.put("/favicon.ico", new int[] {404, 404});
         expected.put("/v3", new int[] {404, 404});
         expected.put("/ab", new int[] {404, 404});
         expected.put("/a_b", new int[] {404, 404});
         expected.put("/", new int[] {404, 404});
-        // Two or more segments: HEAD is not admitted by any permit rule for the docs, so denyAll applies.
+        // Two or more segments: no permit rule admits them, so denyAll applies (D57).
         expected.put("/v3/api-docs", new int[] {401, 403});
         expected.put("/v3/api-docs/swagger-config", new int[] {401, 403});
         expected.put("/swagger-ui/index.html", new int[] {401, 403});
@@ -723,7 +723,7 @@ class RedirectIT extends IntegrationTestBase {
             }
         }
 
-        assertThat(singleSegment).containsExactlyInAnyOrder("/{code}", "/error", "/swagger-ui.html");
+        assertThat(singleSegment).containsExactlyInAnyOrder("/{code}", "/error");
     }
 
     // ---- D80: trailing slash ----

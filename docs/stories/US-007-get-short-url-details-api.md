@@ -705,3 +705,7 @@ Round 2:
 ## Post-completion change (engineer-approved at the US-014 G2; D129–D131; main session, US-014)
 
 - `GetShortUrlIT.headersExceptDate` (helper) — **updated**: also ignores `X-Request-Id`, via `ApiClient.PER_REQUEST_HEADERS`.
+
+## Post-completion change (engineer-approved; D135; main session, API documentation removal)
+
+- `OpenApiDocsIT` — **removed**. Methods owned by this story: `shouldDocumentGetOperationWithExactlyOneCodePathParameter`, `shouldDocumentGet200AsJsonOnlyWithTheSameTenPropertiesAsCreate`, `shouldDocumentGetErrorResponsesAsProblemJsonOnlyWithTheProblemSchema`, `shouldApplyBasicAuthenticationToTheGetOperation`, `shouldDescribeTheCheckAfter409UseOfGet`. The D71 guidance now lives in the `ShortUrlController.create` Javadoc.

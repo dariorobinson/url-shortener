@@ -39,7 +39,7 @@ To run the app from source instead: `docker compose up -d postgres`, export the 
 ./mvnw verify
 ```
 
-This runs about 1,200 unit, web-slice and repository tests (Surefire, `*Test`), then about 920 integration tests (Failsafe, `*IT`), including 259 Cucumber scenarios. Every test that touches a database uses real PostgreSQL through Testcontainers; there is no H2. The build fails if merged line coverage drops below 70% (it is currently about 98%). Docker must be running.
+This runs about 1,200 unit, web-slice and repository tests (Surefire, `*Test`), then about 880 integration tests (Failsafe, `*IT`), including 250 Cucumber scenarios. Every test that touches a database uses real PostgreSQL through Testcontainers; there is no H2. The build fails if merged line coverage drops below 70% (it is currently about 98%). Docker must be running.
 
 ## Using the API
 
@@ -75,7 +75,7 @@ curl -s -u $A -X DELETE $B/api/v1/urls/sale2027      # 204; the code is then 404
 | DELETE | `/api/v1/urls/{code}` | ADMIN | 204 |
 | GET | `/api/v1/urls/{code}/stats` | owner, ADMIN | 200 |
 
-Full contract: Swagger UI at `http://localhost:8080/swagger-ui.html`.
+There is no generated API documentation (D135); the contract is the table above, `docs/architecture.md` (REST API) and the story acceptance criteria.
 
 An error is always a problem document, for example:
 

@@ -980,3 +980,8 @@ From round 1:
 From round 2:
 5. "To check JaCoCo fixes read-only, run verify twice and count sessions in `jacoco-sessions.html`, and use `-Djacoco.skip=true` to prove the gate fails loudly."
 6. "The Flyway/PostgreSQL 18 warning is an accepted risk; don't raise it again as a new finding."
+
+## Post-completion change (engineer-approved; D135; main session, API documentation removal)
+
+- Cucumber scenario `smoke.feature` "The API documentation is published" — **removed**, with the `SmokeSteps` steps `iRequestTheOpenApiDocument`, `theOpenApiDocumentRespondsWithStatus` and `theOpenApiDocumentIsAValidOpenApiDocument` and the `openApiResponse` field.
+- The springdoc-openapi dependency was removed from `pom.xml`; every OpenAPI statement in this story is historical.
